@@ -1,0 +1,154 @@
+{
+  "total_markets": 500,
+  "total_canonical_records": 500,
+  "total_snapshots": 275953,
+  "unique_tokens_with_history": 500,
+  "time_range": {
+    "start": "2026-08-29 07:00:14",
+    "end": "2026-09-29 06:42:17"
+  },
+  "total_volume_usd": 971628061.3969231,
+  "total_liquidity_usd": 65486155.618410006,
+  "volume_stats": {
+    "mean": 1943256.122793846,
+    "std": 6440389.280020933,
+    "min": 8603.456437,
+    "p25": 39341.5537055,
+    "median": 211951.05720600003,
+    "p75": 1439354.9367794998,
+    "max": 69951501.850577
+  },
+  "liquidity_stats": {
+    "mean": 130972.31123682001,
+    "std": 183269.07902225692,
+    "min": 150.46265,
+    "median": 72610.249085,
+    "max": 1818263.76107
+  },
+  "top_entities": {
+    "Will": 72,
+    "Bitcoin": 56,
+    "Iran": 36,
+    "Tesla": 29,
+    "September": 25,
+    "Ethereum": 24,
+    "French": 23,
+    "China": 17,
+    "Crude Oil": 17,
+    "Donald Trump": 15
+  },
+  "price_stats": {
+    "min": 0.0005,
+    "mean": 0.21819612216573114,
+    "median": 0.075,
+    "max": 0.9995,
+    "std": 0.2745605905112307
+  },
+  "top_correlated_pairs": [
+    {
+      "token_a": "115750120319570906439452647058499012902994978308760023806085480216228008801630",
+      "token_b": "17293680532409373592851981890187974925421497368874929066127397071358721239201",
+      "market_a_title": "Exact Score: Czechia 1 - 2 England?",
+      "market_b_title": "Exact Score: Czechia 0 - 0 England?",
+      "correlation": 0.9997022238988357
+    },
+    {
+      "token_a": "26210920542901213037181952258593516852822439384922773511706559479149148712237",
+      "token_b": "4748753918400820779971963205663207330504709203494379821311314426306047130986",
+      "market_a_title": "Will the price of Bitcoin be above $78,000 on September 29?",
+      "market_b_title": "Will the price of Bitcoin be above $76,000 on September 29?",
+      "correlation": 0.9996985306678163
+    },
+    {
+      "token_a": "29953357233096604437572805948473025059382455425534390092237501335046987649362",
+      "token_b": "4748753918400820779971963205663207330504709203494379821311314426306047130986",
+      "market_a_title": "Will the price of Bitcoin be above $94,000 on September 29?",
+      "market_b_title": "Will the price of Bitcoin be above $76,000 on September 29?",
+      "correlation": -0.999473025979248
+    },
+    {
+      "token_a": "4182293672188064858299100436399789029971862003101374702870005212116719338445",
+      "token_b": "48750007323856536612499490516859191859016083300251227028339824301259524891220",
+      "market_a_title": "Will China PR vs. Turkmenistan end in a draw?",
+      "market_b_title": "Will China PR win on 2026-10-02?",
+      "correlation": -0.9994614940346043
+    },
+    {
+      "token_a": "4182293672188064858299100436399789029971862003101374702870005212116719338445",
+      "token_b": "68313844994617680026968578704327707238922469036869817267887158048590363709363",
+      "market_a_title": "Will China PR vs. Turkmenistan end in a draw?",
+      "market_b_title": "Will Turkmenistan win on 2026-10-02?",
+      "correlation": -0.9992329981978583
+    },
+    {
+      "token_a": "2541826936679449086101042286708893607907999949117247326957097109389665742334",
+      "token_b": "78118411753855217665467706549781231428147746636243881411542407456423193037210",
+      "market_a_title": "Will the price of Bitcoin be above $92,000 on September 29?",
+      "market_b_title": "Will the price of Bitcoin be above $90,000 on September 29?",
+      "correlation": 0.9992282927013107
+    },
+    {
+      "token_a": "26210920542901213037181952258593516852822439384922773511706559479149148712237",
+      "token_b": "29953357233096604437572805948473025059382455425534390092237501335046987649362",
+      "market_a_title": "Will the price of Bitcoin be above $78,000 on September 29?",
+      "market_b_title": "Will the price of Bitcoin be above $94,000 on September 29?",
+      "correlation": -0.9991237186510479
+    },
+    {
+      "token_a": "48750007323856536612499490516859191859016083300251227028339824301259524891220",
+      "token_b": "68313844994617680026968578704327707238922469036869817267887158048590363709363",
+      "market_a_title": "Will China PR win on 2026-10-02?",
+      "market_b_title": "Will Turkmenistan win on 2026-10-02?",
+      "correlation": 0.9986707093952301
+    },
+    {
+      "token_a": "26210920542901213037181952258593516852822439384922773511706559479149148712237",
+      "token_b": "41884578818578423510779126846277735241262259962782430583148855297623215142928",
+      "market_a_title": "Will the price of Bitcoin be above $78,000 on September 29?",
+      "market_b_title": "Will the price of Bitcoin be between $78,000 and $80,000 on September 29?",
+      "correlation": -0.9978470370927081
+    },
+    {
+      "token_a": "106594022055764032073387272149844198597373123793185140448912305272615756321148",
+      "token_b": "44775416138578282465459054824359990899645991432935995553744569956484214730108",
+      "market_a_title": "Will Solana reach $150 in September?",
+      "market_b_title": "Will Solana reach $170 in September?",
+      "correlation": 0.9977377352990523
+    },
+    {
+      "token_a": "78118411753855217665467706549781231428147746636243881411542407456423193037210",
+      "token_b": "94603289929765727858811727396081084462337638579196446759903583876879827923249",
+      "market_a_title": "Will the price of Bitcoin be above $90,000 on September 29?",
+      "market_b_title": "Will the price of Bitcoin be above $88,000 on September 29?",
+      "correlation": 0.9975912735297893
+    },
+    {
+      "token_a": "111061902544814266207267295505639408607400625795891618462682726460921782993748",
+      "token_b": "55159722761418013044126414276680602270318000841690689684819994448621694923050",
+      "market_a_title": "Will there be no change in Fed interest rates after the October 2026 meeting?",
+      "market_b_title": "Will the Fed increase interest rates by 25 bps after the October 2026 meeting?",
+      "correlation": -0.9973826346226188
+    },
+    {
+      "token_a": "2685208900940169931849950507624561177770116721378463608911784908420728919301",
+      "token_b": "65144249117506211016975197397745430879511292875548509177127869369239680689960",
+      "market_a_title": "Will the price of Ethereum be above $2,800 on September 29?",
+      "market_b_title": "Will Ethereum reach $2,800 in September?",
+      "correlation": 0.997116498125765
+    },
+    {
+      "token_a": "113053897974216701857412767073868584930308872130787220729967552852426688398986",
+      "token_b": "9184201099748046587666399594130891055459960604087646669770372117348979533153",
+      "market_a_title": "Anthropic lab leak by June 30, 2027?",
+      "market_b_title": "Russia military action against an EU country by September 30, 2026?",
+      "correlation": 0.9965340890385673
+    },
+    {
+      "token_a": "41884578818578423510779126846277735241262259962782430583148855297623215142928",
+      "token_b": "4748753918400820779971963205663207330504709203494379821311314426306047130986",
+      "market_a_title": "Will the price of Bitcoin be between $78,000 and $80,000 on September 29?",
+      "market_b_title": "Will the price of Bitcoin be above $76,000 on September 29?",
+      "correlation": -0.9963246193831552
+    }
+  ]
+}
