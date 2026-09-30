@@ -13,4 +13,6 @@ data/features/*
 !data/features/.gitkeep
 *.duckdb
 *.duckdb.wal
+data/raw_hf_messages/*
+!data/raw_hf_messages/.gitkeep
 .env
