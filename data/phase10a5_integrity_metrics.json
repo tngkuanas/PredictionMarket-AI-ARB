@@ -1,0 +1,55 @@
+{
+  "session_id": "sess_20260930_124351",
+  "venue": "polymarket",
+  "endpoint": "wss://ws-subscriptions-clob.polymarket.com/ws/market",
+  "resolved_ip": "104.18.34.205",
+  "duration_seconds": 15.78,
+  "message_metrics": {
+    "total_received": 3804,
+    "total_persisted": 3804,
+    "total_bytes": 2572558,
+    "messages_per_second": 241.12,
+    "type_breakdown": {
+      "book": 100,
+      "price_change": 3674,
+      "last_trade_price": 30
+    },
+    "rejected_count": 0
+  },
+  "timestamp_metrics": {
+    "exchange_timestamp_coverage": 1.0,
+    "local_receive_timestamp_coverage": 1.0,
+    "clock_skew_ms": {
+      "mean": 170.04,
+      "median": 70.55,
+      "p95": 319.58,
+      "negative_skews_count": 0
+    },
+    "resolution": "microsecond"
+  },
+  "book_metrics": {
+    "total_reconstructed": 3774,
+    "successful_valid": 3725,
+    "crossed_books": 2,
+    "reconstruction_success_rate": 0.987
+  },
+  "trade_metrics": {
+    "trades_captured": 30,
+    "trade_timestamp_coverage": 1.0,
+    "trade_price_validity_rate": 1.0,
+    "trade_volume_usd": 3732.19
+  },
+  "universe_metrics": {
+    "monitored_tokens": 40,
+    "unique_markets": 20
+  },
+  "connection_metrics": {
+    "status": "COMPLETED",
+    "disconnects": 0,
+    "reconnects": 0
+  },
+  "anti_synthetic_certification": {
+    "clean": true,
+    "violations": []
+  }
+}
