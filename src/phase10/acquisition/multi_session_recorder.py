@@ -275,7 +275,7 @@ class MultiSessionContinuousRecorder:
 
         self.health_monitor.current_markets_count = session_record.markets_count
         self.health_monitor.current_tokens_count = session_record.tokens_count
-        self.health_monitor.total_trades = len(self.trade_processor.recorded_trades)
+        self.health_monitor.total_trades += len(self.trade_processor.recorded_trades)
         self.health_monitor.generate_heartbeat(session_id=session_id)
 
         # Persist session to DuckDB
@@ -290,6 +290,14 @@ class MultiSessionContinuousRecorder:
                 self.db_store.persist_data_quality(conn, self.sequence_anomalies)
         finally:
             conn.close()
+            del conn
+            import gc
+            gc.collect()
+
+        # Clear per-session buffers to bound memory and avoid quadratic re-persistence
+        self.reconstructor.clear_buffers()
+        self.trade_processor.clear_buffers()
+        self.sequence_anomalies.clear()
 
         self.completed_sessions.append(session_record)
         return session_record
@@ -464,10 +472,10 @@ class MultiSessionContinuousRecorder:
             "unique_tokens": len(set(u.token_id for u in self.all_universe_entries)),
             "reconciliation": reconciliation,
             "anti_synthetic_certification": anti_synthetic,
-            "total_trades": len(self.trade_processor.recorded_trades),
-            "total_trade_volume_usd": round(sum(t.size_usd for t in self.trade_processor.recorded_trades), 2),
-            "total_snapshots": len(self.reconstructor.reconstructed_snapshots),
-            "total_book_updates": len(self.reconstructor.book_updates),
+            "total_trades": full_audit.get("trades_count", 0),
+            "total_trade_volume_usd": full_audit.get("total_trade_notional_usd", 0.0),
+            "total_snapshots": full_audit.get("book_states_count", 0),
+            "total_book_updates": reconciliation.get("frames_on_disk", 0) + reconciliation.get("batched_items_delta", 0),
             "full_dataset_audit": full_audit
         }
 

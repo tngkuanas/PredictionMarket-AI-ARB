@@ -30,6 +30,11 @@ class OrderBookReconstructor:
         self.reconstructed_snapshots: List[ReconstructedBookSnapshot] = []
         self.book_updates: List[BookUpdateRecord] = []
 
+    def clear_buffers(self) -> None:
+        """Clears accumulated snapshots and updates to bound memory and avoid quadratic re-persistence."""
+        self.reconstructed_snapshots.clear()
+        self.book_updates.clear()
+
     def mark_disconnected(self) -> None:
         """Marks books as disconnected/stale so incremental updates are never applied prior to fresh snapshots."""
         self._stale_or_reconnecting = True

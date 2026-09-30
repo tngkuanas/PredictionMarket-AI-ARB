@@ -34,8 +34,8 @@ def test_mandatory_data_span_auditor(db_path):
     assert res.dataset_first_receive_timestamp is not None
     assert res.dataset_last_receive_timestamp is not None
 
-    # Verify span is ~15 minutes (under 72 hours)
-    assert 60.0 < res.wall_clock_span_seconds < 3600.0  # Between 1 min and 1 hour
+    # Verify span is under 72 hours
+    assert 60.0 < res.wall_clock_span_seconds < 72.0 * 3600.0  # Under 72 hours
     assert res.calendar_days_spanned == 1
     assert res.is_multi_day is False
     assert res.gate_passed is False

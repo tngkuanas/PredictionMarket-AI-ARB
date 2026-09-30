@@ -26,6 +26,11 @@ class TradeStreamProcessor:
         self.quality_anomalies: List[DataQualityRecord] = []
         self._seen_tx_hashes = set()
 
+    def clear_buffers(self) -> None:
+        """Clears accumulated trades buffer to bound memory and avoid quadratic re-persistence."""
+        self.recorded_trades.clear()
+        self.quality_anomalies.clear()
+
     def process_raw_trade(
         self,
         raw_rec: RawMessageRecord

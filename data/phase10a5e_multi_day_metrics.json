@@ -1,0 +1,53 @@
+{
+  "first_genuine_observation": "2026-09-30T20:43:51.841000",
+  "last_genuine_observation": "2026-09-30T21:59:55.096860",
+  "wall_clock_span_seconds": 4563.25586,
+  "wall_clock_span_str": "4563.26 seconds (76.05 minutes, 1.27 hours)",
+  "total_active_recording_time_seconds": 532.2671506404877,
+  "sessions_count": 19,
+  "markets_count": 70,
+  "tokens_count": 70,
+  "raw_messages_count": 149083,
+  "persisted_messages_count": 149083,
+  "rejected_messages_count": 0,
+  "book_states_count": 262084,
+  "valid_book_states": 253850,
+  "missing_data_states": 8160,
+  "crossed_book_states": 74,
+  "other_invalid_states": 0,
+  "trades_count": 787,
+  "total_trade_notional_usd": 70870.52,
+  "duplicate_trades_count": 0,
+  "duplicate_frames_count": 29,
+  "persistence_loss_count": 0,
+  "sequence_gaps": 0,
+  "disconnects": 2,
+  "reconnects": 1,
+  "total_downtime_seconds": 3701.06,
+  "stale_book_contamination": "NONE",
+  "recovery_failures_count": 0,
+  "exchange_timestamp_inversions_count": 31,
+  "injected_records_count": 0,
+  "timestamp_skew": {
+    "mean_ms": 271.12,
+    "median_ms": 84.29,
+    "p95_ms": 597.87,
+    "p99_ms": 2413.17,
+    "negative_skew_count": 0
+  },
+  "synthetic_records_count": 0,
+  "placeholder_records_count": 0,
+  "accounting_reconciliation": {
+    "received_eq_persisted_plus_rejected": true,
+    "parsed_eq_applied_plus_rejected": true,
+    "frames_on_disk": 148181,
+    "batched_items_delta": 902
+  },
+  "anti_synthetic_clean": true,
+  "dataset_suitability_for_phase10a6": "NO",
+  "remaining_limitations": [
+    "Temporal Span: Current wall-clock span (4563.26 seconds (76.05 minutes, 1.27 hours)) is below the mandatory 72-hour threshold.",
+    "Continuous Ingestion: Persistent background daemon must continue recording across 3+ full calendar days to capture real-world macro and scheduled information releases.",
+    "Market Liquidity Concentration: Message velocity is heavily concentrated in top-tier prediction markets (interest rates, presidential elections, top-tier athletics), with long-tail markets having wider spreads."
+  ]
+}
