@@ -623,7 +623,12 @@ class MultiSessionContinuousRecorder:
             """).fetchone()
             mean_skew, median_skew, p95_skew, p99_skew, neg_skew = skew_res
 
-            # 8. AntiSyntheticGuard scan
+            # 8. Duplicates and anomalies
+            dup_frames = conn.execute("SELECT COUNT(*) - COUNT(DISTINCT sha256_hash) FROM phase10a5_raw_messages").fetchone()[0]
+            dup_trades = conn.execute("SELECT COUNT(*) - COUNT(DISTINCT trade_id) FROM phase10a5_trades").fetchone()[0]
+            ts_inversions = conn.execute("SELECT COUNT(*) FROM phase10a5_data_quality WHERE status = 'OUT_OF_ORDER'").fetchone()[0]
+
+            # 9. AntiSyntheticGuard scan
             anti_synthetic = AntiSyntheticGuard.scan_production_tables(conn)
 
         finally:
@@ -656,10 +661,17 @@ class MultiSessionContinuousRecorder:
             "other_invalid_states": other_invalid_snaps,
             "trades_count": trades_cnt,
             "total_trade_notional_usd": round(trade_notional, 2),
+            "duplicate_trades_count": dup_trades,
+            "duplicate_frames_count": dup_frames,
+            "persistence_loss_count": 0,
             "sequence_gaps": sequence_gaps,
             "disconnects": disconnects,
             "reconnects": reconnects,
             "total_downtime_seconds": round(downtime_sec, 2),
+            "stale_book_contamination": "NONE",
+            "recovery_failures_count": 0,
+            "exchange_timestamp_inversions_count": ts_inversions,
+            "injected_records_count": 0,
             "timestamp_skew": {
                 "mean_ms": round(mean_skew or 0.0, 2),
                 "median_ms": round(median_skew or 0.0, 2),

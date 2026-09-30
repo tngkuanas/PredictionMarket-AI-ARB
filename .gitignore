@@ -17,4 +17,6 @@ data/raw_hf_messages/*
 !data/raw_hf_messages/.gitkeep
 data/phase10a5_raw/*
 !data/phase10a5_raw/.gitkeep
+data/*.log
+data/*.pid
 .env
