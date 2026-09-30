@@ -22,6 +22,7 @@ import logging
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 
+import time
 import duckdb
 import numpy as np
 import pandas as pd

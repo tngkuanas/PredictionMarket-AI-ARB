@@ -413,7 +413,16 @@ def test_unbundled_cost_model():
 
 def test_duckdb_persistence_records():
     """Queries DuckDB to verify tables exist and have valid rows from pipeline run."""
-    conn = duckdb.connect("data/prediction_market.duckdb", read_only=True)
+    import time
+    conn = None
+    for _ in range(15):
+        try:
+            conn = duckdb.connect("data/prediction_market.duckdb", read_only=True)
+            break
+        except Exception:
+            time.sleep(0.3)
+    if conn is None:
+        conn = duckdb.connect("data/prediction_market.duckdb", read_only=True)
     try:
         tables = conn.execute("SHOW TABLES").fetchall()
         table_names = [t[0] for t in tables]
