@@ -162,6 +162,19 @@ class HealthHeartbeatRecord:
 
 
 @dataclass
+class ReconnectEventRecord:
+    reconnect_id: str
+    session_id: str
+    disconnect_timestamp: datetime
+    reconnect_attempt: int
+    reconnect_timestamp: datetime
+    reconnect_reason: str
+    reconnect_latency_seconds: float
+    subscription_success: bool
+    snapshot_success: bool
+
+
+@dataclass
 class DataQualityRecord:
     record_id: str
     session_id: str

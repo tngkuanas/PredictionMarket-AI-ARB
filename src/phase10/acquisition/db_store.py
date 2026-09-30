@@ -17,6 +17,7 @@ from src.phase10.acquisition.schema import (
     GenuineEventRecord,
     UniverseChangeEventRecord,
     HealthHeartbeatRecord,
+    ReconnectEventRecord,
 )
 from src.phase10.acquisition.anti_synthetic_guard import AntiSyntheticGuard
 
@@ -200,6 +201,19 @@ class Phase10A5DbStore:
                 negative_skew_count INTEGER,
                 disk_storage_bytes BIGINT
             );
+
+            -- 11. Reconnect Events Table (Phase 10A.5d)
+            CREATE TABLE IF NOT EXISTS phase10a5_reconnect_events (
+                reconnect_id VARCHAR PRIMARY KEY,
+                session_id VARCHAR,
+                disconnect_timestamp TIMESTAMP,
+                reconnect_attempt INTEGER,
+                reconnect_timestamp TIMESTAMP,
+                reconnect_reason VARCHAR,
+                reconnect_latency_seconds DOUBLE,
+                subscription_success BOOLEAN,
+                snapshot_success BOOLEAN
+            );
         """)
 
         # Gracefully migrate phase10a5_connection_sessions if created with fewer columns
@@ -354,4 +368,21 @@ class Phase10A5DbStore:
             INSERT OR REPLACE INTO phase10a5_data_quality VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """, rows)
         return len(rows)
+
+    def persist_reconnect_events(self, conn: duckdb.DuckDBPyConnection, events: List[ReconnectEventRecord]) -> int:
+        if not events:
+            return 0
+        rows = []
+        for e in events:
+            rows.append((
+                e.reconnect_id, e.session_id, e.disconnect_timestamp,
+                int(e.reconnect_attempt), e.reconnect_timestamp,
+                e.reconnect_reason, float(e.reconnect_latency_seconds),
+                bool(e.subscription_success), bool(e.snapshot_success)
+            ))
+        conn.executemany("""
+            INSERT OR REPLACE INTO phase10a5_reconnect_events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, rows)
+        return len(rows)
+
 

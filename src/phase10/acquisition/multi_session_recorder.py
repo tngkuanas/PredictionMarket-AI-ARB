@@ -28,6 +28,7 @@ from src.phase10.acquisition.schema import (
     DataQualityRecord,
     UniverseChangeEventRecord,
     HealthHeartbeatRecord,
+    ReconnectEventRecord,
 )
 from src.phase10.acquisition.raw_recorder import RawMarketDataRecorder
 from src.phase10.acquisition.order_book_reconstructor import OrderBookReconstructor
@@ -149,53 +150,60 @@ class MultiSessionContinuousRecorder:
         )
 
         self.completed_sessions: List[ConnectionSessionRecord] = []
+        self.reconnect_events: List[ReconnectEventRecord] = []
         self.total_disconnects = 0
         self.total_reconnects = 0
         self.total_sequence_gaps = 0
         self.all_universe_entries: List[MarketUniverseEntry] = []
         self.universe_change_events: List[UniverseChangeEventRecord] = []
-        self._last_token_sequence: Dict[str, int] = {}
+        self._session_last_stream_seq: Dict[str, int] = {}
+        self._last_token_timestamp: Dict[str, datetime] = {}
         self.sequence_anomalies: List[DataQualityRecord] = []
 
     def _generate_session_id(self) -> str:
         return f"sess_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{random.randint(100, 999)}"
 
     def check_sequence_gap(self, raw_rec: RawMessageRecord) -> Optional[DataQualityRecord]:
-        """Detects stream sequence gaps or out-of-order frames."""
+        """Detects stream sequence gaps or out-of-order frames per session."""
         current_seq = raw_rec.message_seq
+        session_id = raw_rec.ingestion_session_id
         token_id = raw_rec.token_id or "global"
 
-        # Check 1: Stream sequence continuity
-        if hasattr(self, "_last_stream_sequence") and self._last_stream_sequence is not None:
-            expected_seq = self._last_stream_sequence + 1
+        # Check 1: Stream sequence continuity per session
+        if session_id in self._session_last_stream_seq:
+            last_seq = self._session_last_stream_seq[session_id]
+            expected_seq = last_seq + 1
+            # Multiple records can originate from the same WebSocket frame (batch).
+            # A gap occurs ONLY when a frame sequence is strictly skipped.
             if current_seq > expected_seq:
                 gap_size = current_seq - expected_seq
                 self.total_sequence_gaps += 1
                 dq = DataQualityRecord(
-                    record_id=f"dq_gap_{token_id[:8]}_{current_seq}",
-                    session_id=raw_rec.ingestion_session_id,
+                    record_id=f"dq_gap_{session_id}_{current_seq}",
+                    session_id=session_id,
                     market_id=raw_rec.market_id,
                     token_id=raw_rec.token_id,
                     timestamp=raw_rec.receive_timestamp,
                     status=DataQualityStatus.INVALID_SEQUENCE,
                     component="SEQUENCE",
-                    details=f"Stream sequence gap: expected {expected_seq}, observed {current_seq} (dropped {gap_size})"
+                    details=f"Stream sequence gap in session {session_id}: expected {expected_seq}, observed {current_seq} (dropped {gap_size})"
                 )
                 self.sequence_anomalies.append(dq)
-                self._last_stream_sequence = current_seq
+                self._session_last_stream_seq[session_id] = current_seq
                 return dq
-        self._last_stream_sequence = current_seq
+            elif current_seq >= last_seq:
+                self._session_last_stream_seq[session_id] = current_seq
+        else:
+            self._session_last_stream_seq[session_id] = current_seq
 
         # Check 2: Per-token chronological ordering (exchange timestamp monotonicity)
         if raw_rec.token_id and raw_rec.exchange_timestamp:
-            if not hasattr(self, "_last_token_timestamp"):
-                self._last_token_timestamp = {}
             if raw_rec.token_id in self._last_token_timestamp:
                 last_ts = self._last_token_timestamp[raw_rec.token_id]
                 if raw_rec.exchange_timestamp < last_ts:
                     dq = DataQualityRecord(
                         record_id=f"dq_ooo_{raw_rec.token_id[:8]}_{current_seq}",
-                        session_id=raw_rec.ingestion_session_id,
+                        session_id=session_id,
                         market_id=raw_rec.market_id,
                         token_id=raw_rec.token_id,
                         timestamp=raw_rec.receive_timestamp,
@@ -234,8 +242,11 @@ class MultiSessionContinuousRecorder:
                 # 2. Check sequence continuity
                 gap = self.check_sequence_gap(r)
                 if gap:
-                    self.health_monitor.total_sequence_gaps += 1
-                    logger.warning(f"Sequence gap on token {r.token_id}: {gap.details}")
+                    if gap.status == DataQualityStatus.INVALID_SEQUENCE:
+                        self.health_monitor.total_sequence_gaps += 1
+                        logger.warning(f"Sequence gap on session {r.ingestion_session_id}: {gap.details}")
+                    else:
+                        logger.debug(f"Data quality anomaly on token {r.token_id}: {gap.details}")
 
                 # 3. Apply to L2 book
                 upds, snap = self.reconstructor.process_raw_record(r)
@@ -341,23 +352,68 @@ class MultiSessionContinuousRecorder:
                 )
                 elapsed_total += run_sec
 
-                if sess_record.status == "FAILED":
+                if sess_record.status in ("FAILED", "DISCONNECTED"):
                     self.total_disconnects += 1
                     self.health_monitor.record_connection_event("DISCONNECT")
-                    logger.warning(f"Session {sess_id} failed. Initiating reconnect with backoff...")
+                    # Book re-initialization (anti-stale delta gating per Section 8)
+                    self.reconstructor.mark_disconnected()
+
                     delay = min(self.base_reconnect_delay * (2 ** self.total_reconnects) + random.uniform(0.1, 0.5), self.max_reconnect_delay)
+                    logger.warning(f"Session {sess_id} disconnected/failed ({sess_record.status}). Reconnecting after {delay:.2f}s backoff...")
                     await asyncio.sleep(delay)
                     self.total_reconnects += 1
+                    reconnect_ts = datetime.now(timezone.utc)
                     self.health_monitor.record_connection_event("RECONNECT", downtime_sec=delay)
+
+                    # Create and persist ReconnectEventRecord
+                    reconnect_rec = ReconnectEventRecord(
+                        reconnect_id=f"rec_{sess_id}_{self.total_reconnects}",
+                        session_id=sess_id,
+                        disconnect_timestamp=sess_record.end_timestamp or reconnect_ts,
+                        reconnect_attempt=self.total_reconnects,
+                        reconnect_timestamp=reconnect_ts,
+                        reconnect_reason=sess_record.error_details or f"STREAM_{sess_record.status}",
+                        reconnect_latency_seconds=round(delay, 3),
+                        subscription_success=True,
+                        snapshot_success=True
+                    )
+                    self.reconnect_events.append(reconnect_rec)
+                    sess_record.reconnect_count += 1
+                    conn = duckdb.connect(self.db_path)
+                    try:
+                        self.db_store.persist_reconnect_events(conn, [reconnect_rec])
+                        self.db_store.persist_session(conn, sess_record)
+                    finally:
+                        conn.close()
 
             except Exception as e:
                 logger.error(f"Unhandled exception in session {sess_id}: {e}")
                 self.total_disconnects += 1
                 self.health_monitor.record_connection_event("DISCONNECT")
-                delay = self.base_reconnect_delay
+                self.reconstructor.mark_disconnected()
+                delay = min(self.base_reconnect_delay * (2 ** self.total_reconnects) + random.uniform(0.1, 0.5), self.max_reconnect_delay)
                 await asyncio.sleep(delay)
                 self.total_reconnects += 1
+                reconnect_ts = datetime.now(timezone.utc)
                 self.health_monitor.record_connection_event("RECONNECT", downtime_sec=delay)
+
+                reconnect_rec = ReconnectEventRecord(
+                    reconnect_id=f"rec_{sess_id}_{self.total_reconnects}",
+                    session_id=sess_id,
+                    disconnect_timestamp=reconnect_ts,
+                    reconnect_attempt=self.total_reconnects,
+                    reconnect_timestamp=reconnect_ts,
+                    reconnect_reason=str(e),
+                    reconnect_latency_seconds=round(delay, 3),
+                    subscription_success=True,
+                    snapshot_success=True
+                )
+                self.reconnect_events.append(reconnect_rec)
+                conn = duckdb.connect(self.db_path)
+                try:
+                    self.db_store.persist_reconnect_events(conn, [reconnect_rec])
+                finally:
+                    conn.close()
 
             # Check if universe refresh is due
             now = datetime.now(timezone.utc)
@@ -526,8 +582,16 @@ class MultiSessionContinuousRecorder:
 
             # 6. Quality, gaps, disconnects, downtime
             sequence_gaps = conn.execute("SELECT COUNT(*) FROM phase10a5_data_quality WHERE status = 'INVALID_SEQUENCE'").fetchone()[0]
-            disconnects = conn.execute("SELECT COALESCE(SUM(disconnect_count), 0) FROM phase10a5_connection_sessions").fetchone()[0]
-            reconnects = conn.execute("SELECT COALESCE(SUM(reconnect_count), 0) FROM phase10a5_connection_sessions").fetchone()[0]
+            disc_sum = conn.execute("SELECT COALESCE(SUM(disconnect_count), 0) FROM phase10a5_connection_sessions").fetchone()[0]
+            disc_status = conn.execute("SELECT COUNT(*) FROM phase10a5_connection_sessions WHERE status IN ('FAILED', 'DISCONNECTED')").fetchone()[0]
+            disconnects = max(disc_sum, disc_status)
+            
+            rec_sum = conn.execute("SELECT COALESCE(SUM(reconnect_count), 0) FROM phase10a5_connection_sessions").fetchone()[0]
+            try:
+                rec_events = conn.execute("SELECT COUNT(*) FROM phase10a5_reconnect_events").fetchone()[0]
+            except Exception:
+                rec_events = 0
+            reconnects = max(rec_sum, rec_events)
 
             downtime_sec = conn.execute("""
                 WITH ordered_sessions AS (

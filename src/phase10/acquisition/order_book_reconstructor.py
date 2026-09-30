@@ -24,10 +24,19 @@ class OrderBookReconstructor:
 
     def __init__(self, depth_levels_limit: int = 10):
         self.depth_limit = depth_levels_limit
-        # token_id -> {"bids": {price: size}, "asks": {price: size}, "market_id": str, "seq": int}
+        # token_id -> {"bids": {price: size}, "asks": {price: size}, "market_id": str, "seq": int, "initialized": bool}
         self._books: Dict[str, Dict[str, Any]] = {}
+        self._stale_or_reconnecting: bool = False
         self.reconstructed_snapshots: List[ReconstructedBookSnapshot] = []
         self.book_updates: List[BookUpdateRecord] = []
+
+    def mark_disconnected(self) -> None:
+        """Marks books as disconnected/stale so incremental updates are never applied prior to fresh snapshots."""
+        self._stale_or_reconnecting = True
+        for tok in self._books:
+            self._books[tok]["initialized"] = False
+        logger.info("OrderBookReconstructor: Marked all existing token books as uninitialized/stale pending fresh snapshots.")
+
 
     def process_raw_record(
         self,
@@ -83,7 +92,8 @@ class OrderBookReconstructor:
             "bids": bids_map,
             "asks": asks_map,
             "market_id": market_id,
-            "seq": 1
+            "seq": 1,
+            "initialized": True
         }
 
         snap = self._compile_snapshot(token_id, raw_rec.ingestion_session_id, raw_rec.receive_timestamp, raw_rec.exchange_timestamp)
@@ -109,6 +119,12 @@ class OrderBookReconstructor:
             if not token_id:
                 continue
 
+            # Anti-Stale-Book Gating (Phase 10A.5d Section 8):
+            # Do NOT apply deltas to uninitialized or disconnected stale books
+            if token_id not in self._books or not self._books[token_id].get("initialized", False):
+                logger.debug(f"Gating: Dropping incremental price change on uninitialized/stale token {token_id}")
+                continue
+
             try:
                 price = round(float(chg.get("price", 0.0)), 4)
                 size = round(float(chg.get("size", 0.0)), 4)
@@ -119,15 +135,6 @@ class OrderBookReconstructor:
             except (ValueError, TypeError) as ex:
                 logger.debug(f"Malformed price change element: {ex}")
                 continue
-
-            # Initialize book container if not present
-            if token_id not in self._books:
-                self._books[token_id] = {
-                    "bids": {},
-                    "asks": {},
-                    "market_id": market_id,
-                    "seq": 0
-                }
 
             book = self._books[token_id]
             book["seq"] += 1

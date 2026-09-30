@@ -175,14 +175,20 @@ class RawMarketDataRecorder:
                     except Exception as rx_err:
                         logger.warning(f"Error receiving frame: {rx_err}")
                         self._disconnect_count += 1
+                        self.disconnect_reason = str(rx_err)
+                        self.disconnect_timestamp = datetime.now(timezone.utc)
+                        session_status = "DISCONNECTED"
                         break
 
-            session_status = "COMPLETED"
+                if session_status != "DISCONNECTED":
+                    session_status = "COMPLETED"
 
         except Exception as conn_err:
             logger.error(f"WebSocket connection failure: {conn_err}")
             session_status = "FAILED"
             self._disconnect_count += 1
+            self.disconnect_reason = str(conn_err)
+            self.disconnect_timestamp = datetime.now(timezone.utc)
 
         end_ts = datetime.now(timezone.utc)
         return ConnectionSessionRecord(
