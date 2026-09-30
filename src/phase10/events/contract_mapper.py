@@ -109,12 +109,14 @@ class DeterministicContractMapper:
                 return canonical
         return clean
 
-    def _extract_numbers(self, text: str) -> List[float]:
-        """Extract numerical values from text (integers, floats, percentages, bps)."""
+    def _extract_numbers(self, text: str) -> List[Tuple[float, str]]:
+        """Extract numerical values from text along with unit."""
         numbers = []
-        # Matches patterns like 3.5%, $90,000, 25 bps, 0.25
-        matches = re.findall(r"(\d+(?:,\d{3})*(?:\.\d+)?)\s*(%|bps|k|m)?", text.lower())
-        for val_str, unit in matches:
+        matches = re.finditer(r"(\$)?\s*(\d+(?:,\d{3})*(?:\.\d+)?)\s*(%|bps|\bk\b|\bm\b)?", text.lower())
+        for m in matches:
+            is_dollar = bool(m.group(1))
+            val_str = m.group(2)
+            unit = m.group(3) or ("$" if is_dollar else "raw")
             try:
                 num = float(val_str.replace(",", ""))
                 if unit == "%":
@@ -125,7 +127,13 @@ class DeterministicContractMapper:
                     num = num * 1000.0
                 elif unit == "m":
                     num = num * 1000000.0
-                numbers.append(num)
+                # Exclude calendar years
+                if unit == "raw" and (2020 <= num <= 2030):
+                    continue
+                # Exclude days of month (1-31) when no financial unit is attached
+                if unit == "raw" and num <= 31:
+                    continue
+                numbers.append((num, unit))
             except ValueError:
                 continue
         return numbers
@@ -168,25 +176,39 @@ class DeterministicContractMapper:
             except (ValueError, TypeError):
                 pass
 
+        # Check target month / meeting alignment
+        MONTHS = {"january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"}
+        event_months = {w for w in re.findall(r"\b[a-z]+\b", event.title.lower()) if w in MONTHS}
+        market_months = {w for w in re.findall(r"\b[a-z]+\b", market.title.lower()) if w in MONTHS}
+        if event_months and market_months and not event_months.intersection(market_months):
+            temporal_match = False
+            ambiguity_flags.append(AmbiguityFlag.TEMPORAL_MISMATCH)
+
         # 3. Resolution Source Match
         resolution_match = True
         if market.resolution_source:
             res_source_lower = market.resolution_source.lower()
             event_source_lower = event.source.lower()
-            # If market stipulates an exact official agency, event source must align
-            source_tokens_event = set(re.findall(r"\w+", event_source_lower))
-            source_tokens_market = set(re.findall(r"\w+", res_source_lower))
-            has_source_overlap = bool(source_tokens_event.intersection(source_tokens_market))
             
-            # Check source hierarchy: if market requires official regulatory resolution, social media is unacceptable
             from src.phase10.events.schema import SourceType
             if event.source_type == SourceType.SOCIAL_MEDIA:
                 resolution_match = False
                 ambiguity_flags.append(AmbiguityFlag.UNVERIFIED_SOURCE_HIERARCHY)
-            elif not has_source_overlap and len(source_tokens_market) > 1:
-                # Different official source
-                resolution_match = False
-                ambiguity_flags.append(AmbiguityFlag.RESOLUTION_SOURCE_MISMATCH)
+            else:
+                GENERIC_SOURCES = {
+                    "official market resolution source",
+                    "official resolution source",
+                    "polymarket",
+                    "uma",
+                    "consensus"
+                }
+                if res_source_lower not in GENERIC_SOURCES:
+                    source_tokens_event = set(re.findall(r"\w+", event_source_lower))
+                    source_tokens_market = set(re.findall(r"\w+", res_source_lower)) - {"official", "resolution", "source", "release", "press"}
+                    has_source_overlap = bool(source_tokens_event.intersection(source_tokens_market))
+                    if not has_source_overlap and len(source_tokens_market) >= 1:
+                        resolution_match = False
+                        ambiguity_flags.append(AmbiguityFlag.RESOLUTION_SOURCE_MISMATCH)
 
         # 4. Superficial Wording & Semantic Traps
         combined_event_text = f"{event.title} {event.raw_content}"
@@ -198,30 +220,35 @@ class DeterministicContractMapper:
             elif market_pattern.search(combined_event_text) and event_pattern.search(combined_market_text):
                 ambiguity_flags.append(AmbiguityFlag.WORDING_AMBIGUITY)
 
+        # Indirect macro transmission detection
+        if event.event_type in {"macro_inflation", "macro_employment"} and market.event_type == "rate_decision":
+            ambiguity_flags.append(AmbiguityFlag.SCOPE_MISMATCH)
+
         # 5. Threshold Consistency
-        if market.threshold:
-            market_nums = self._extract_numbers(market.threshold)
-            event_nums = self._extract_numbers(event.title)
-            if market_nums and event_nums:
-                m_thresh = market_nums[0]
-                # Check if any event number matches or is in the same ballpark as the threshold
-                has_matching_num = any(
-                    abs(m_thresh - e_val) <= (0.25 * max(m_thresh, 1e-4))
-                    for e_val in event_nums
-                )
-                if not has_matching_num:
-                    ambiguity_flags.append(AmbiguityFlag.THRESHOLD_MISMATCH)
+        market_num_pairs = self._extract_numbers(market.title)
+        if not market_num_pairs and market.threshold:
+            market_num_pairs = self._extract_numbers(market.threshold)
+        event_num_pairs = self._extract_numbers(event.title)
+        if market_num_pairs and event_num_pairs:
+            has_matching_num = any(
+                abs(m_val - e_val) <= (0.05 * max(m_val, 1e-4))
+                for m_val, _ in market_num_pairs
+                for e_val, _ in event_num_pairs
+            )
+            if not has_matching_num:
+                ambiguity_flags.append(AmbiguityFlag.THRESHOLD_MISMATCH)
 
         # 6. Lexical / Semantic Score
         event_words = set(re.findall(r"\b\w{3,}\b", combined_event_text.lower()))
-        market_words = set(re.findall(r"\b\w{3,}\b", combined_market_text.lower()))
+        market_words = set(re.findall(r"\b\w{3,}\b", f"{market.title} {market.underlying_event}".lower()))
         w_inter = event_words.intersection(market_words)
         w_union = event_words.union(market_words)
-        semantic_score = float(len(w_inter) / len(w_union)) if w_union else 0.0
+        jaccard = float(len(w_inter) / len(w_union)) if w_union else 0.0
+        containment = float(len(w_inter) / len(market_words)) if market_words else 0.0
+        semantic_score = max(jaccard, containment * 0.4)
 
         # 7. YES/NO Outcome Polarity Inversion
         # Detect if positive event implies NO on the contract
-        # Example: Event says "Inflation surges" (increase), but market is "Will CPI be BELOW 2.5%"
         is_inverted = False
         negation_terms = [r"\bbelow\b", r"\bless than\b", r"\bunder\b", r"\bnot\b", r"\bfails\b", r"\bdrop\b"]
         has_market_negation = any(re.search(term, market.title.lower()) for term in negation_terms)
@@ -240,9 +267,12 @@ class DeterministicContractMapper:
             AmbiguityFlag.WORDING_AMBIGUITY,
             AmbiguityFlag.UNVERIFIED_SOURCE_HIERARCHY,
         }
-
         active_fatal_flags = fatal_flags.intersection(set(ambiguity_flags))
-        if active_fatal_flags or not entity_match or not temporal_match or not resolution_match:
+
+        if AmbiguityFlag.SCOPE_MISMATCH in ambiguity_flags:
+            decision = MappingDecision.AMBIGUOUS
+            decision_reason = "Ambiguous: indirect macro transmission (e.g. CPI/NFP impulse on policy rate contract)"
+        elif active_fatal_flags or not entity_match or not temporal_match or not resolution_match:
             decision = MappingDecision.REJECTED
             reasons = [f.value for f in ambiguity_flags] or ["Failed core matching criteria"]
             decision_reason = f"Rejected due to fatal criteria failures: {', '.join(reasons)}"
