@@ -1,0 +1,66 @@
+{
+  "dataset_metrics": {
+    "dataset_first_exchange_timestamp": "2026-09-30 20:43:51.841000",
+    "dataset_last_exchange_timestamp": "2026-09-30 20:59:00.907000",
+    "dataset_first_receive_timestamp": "2026-09-30 20:43:52.420331",
+    "dataset_last_receive_timestamp": "2026-09-30 20:59:00.970503",
+    "actual_wall_clock_span_seconds": 908.55,
+    "actual_wall_clock_span_minutes": 15.14,
+    "active_recording_time_seconds": 141.13,
+    "number_of_sessions": 8,
+    "calendar_days_spanned": 1,
+    "is_multi_day": false,
+    "markets_count": 21,
+    "tokens_count": 42,
+    "raw_messages_count": 25730,
+    "book_snapshots_count": 41342,
+    "trades_count": 156,
+    "trades_volume_usd": 16970.26
+  },
+  "data_span_check": {
+    "status": "FAILED",
+    "gate_verdict": "INSUFFICIENT_TEMPORAL_COVERAGE",
+    "reason": "Dataset spans 908.55 seconds (15.14 minutes, 1 calendar day). Required: minimum 72 hours across >= 3 calendar days. Earliest observation (2026-09-30 20:43:52.420331) and latest (2026-09-30 20:59:00.970503) are within ~15 minutes of each other. Per Section 0 critical rule: MUST NOT proceed with event study, MUST NOT calculate event alpha."
+  },
+  "events_metrics": {
+    "candidate_events": 0,
+    "accepted_mappings": 0,
+    "rejected_mappings": 0,
+    "ambiguous_mappings": 0,
+    "independent_event_clusters": 0
+  },
+  "primary_response": {
+    "+100ms": "N/A (Data span < 72h; 0 event overlaps)",
+    "+250ms": "N/A (Data span < 72h; 0 event overlaps)",
+    "+500ms": "N/A (Data span < 72h; 0 event overlaps)",
+    "+1s": "N/A (Data span < 72h; 0 event overlaps)",
+    "+2s": "N/A (Data span < 72h; 0 event overlaps)",
+    "+5s": "N/A (Data span < 72h; 0 event overlaps)",
+    "+15s": "N/A (Data span < 72h; 0 event overlaps)",
+    "+30s": "N/A (Data span < 72h; 0 event overlaps)",
+    "+60s": "N/A (Data span < 72h; 0 event overlaps)",
+    "+5m": "N/A (Data span < 72h; 0 event overlaps)",
+    "+15m": "N/A (Data span < 72h; 0 event overlaps)",
+    "+1h": "N/A (Data span < 72h; 0 event overlaps)"
+  },
+  "executable_response": "N/A (No events within observation window)",
+  "cost_adjusted_response": "N/A",
+  "placebo_results": "N/A (Cannot run placebos without empirical event baseline)",
+  "anti_leakage_certification": {
+    "status": "PASS",
+    "future_price_to_event_selection": "NONE",
+    "event_direction_to_generated_price": "NONE",
+    "synthetic_market_data": "ZERO",
+    "placeholder_tokens": "ZERO",
+    "data_span_fabrication_attempted": "NONE (Refused to simulate multi-day span)"
+  },
+  "anti_synthetic_certification": {
+    "clean": true,
+    "violations": []
+  },
+  "decision_gate": {
+    "classification": "B \u2014 INCONCLUSIVE",
+    "execution_research_permitted": false,
+    "reason": "Dataset wall-clock span is 15.14 minutes (141.13s active recording), failing the 72-hour multi-day threshold. Requires longitudinal data accumulation before event-study inference."
+  }
+}
