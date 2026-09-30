@@ -7,10 +7,10 @@ Strictly avoids hand-picking or narrative selection.
 from datetime import datetime, timezone
 import json
 import logging
-from typing import List, Dict, Any, Optional, Set
+from typing import List, Dict, Any, Optional, Set, Tuple
 import requests
 
-from src.phase10.acquisition.schema import MarketUniverseEntry
+from src.phase10.acquisition.schema import MarketUniverseEntry, UniverseChangeEventRecord
 from src.phase10.acquisition.dns_resolver import enable_polymarket_edge_resolver
 
 logger = logging.getLogger(__name__)
@@ -39,6 +39,53 @@ class MarketUniverseManager:
             "Accept": "application/json"
         })
         self._current_tokens: Set[str] = set()
+        self._previous_markets: Dict[str, MarketUniverseEntry] = {}
+
+    def discover_universe_with_changes(
+        self,
+        session_id: str,
+        limit: int = 50
+    ) -> Tuple[List[MarketUniverseEntry], List[UniverseChangeEventRecord]]:
+        """Queries Gamma API and produces explicit ADDED/REMOVED universe change events."""
+        entries = self.discover_active_universe(session_id=session_id, limit=limit)
+        new_markets: Dict[str, MarketUniverseEntry] = {}
+        for e in entries:
+            if e.market_id not in new_markets:
+                new_markets[e.market_id] = e
+
+        change_events: List[UniverseChangeEventRecord] = []
+        now = datetime.now(timezone.utc)
+
+        # 1. Added markets
+        for m_id, entry in new_markets.items():
+            if m_id not in self._previous_markets:
+                change_events.append(UniverseChangeEventRecord(
+                    event_id=f"uevt_add_{m_id}_{int(now.timestamp())}_{entry.token_id[:8]}",
+                    timestamp=now,
+                    session_id=session_id,
+                    market_id=m_id,
+                    token_id=entry.token_id,
+                    market_added=m_id,
+                    market_removed=None,
+                    reason=f"Objective threshold met: vol_24h=${entry.volume_24h_usd:,.2f} >= ${self.min_volume_24h:,.0f}, liq=${entry.liquidity_usd:,.2f} >= ${self.min_liquidity:,.0f}"
+                ))
+
+        # 2. Removed markets
+        for m_id, old_entry in self._previous_markets.items():
+            if m_id not in new_markets:
+                change_events.append(UniverseChangeEventRecord(
+                    event_id=f"uevt_rem_{m_id}_{int(now.timestamp())}_{old_entry.token_id[:8]}",
+                    timestamp=now,
+                    session_id=session_id,
+                    market_id=m_id,
+                    token_id=old_entry.token_id,
+                    market_added=None,
+                    market_removed=m_id,
+                    reason="Fell below volume/liquidity threshold or closed on Polymarket"
+                ))
+
+        self._previous_markets = new_markets
+        return entries, change_events
 
     def discover_active_universe(
         self,

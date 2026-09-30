@@ -15,6 +15,8 @@ from src.phase10.acquisition.schema import (
     ConnectionSessionRecord,
     DataQualityRecord,
     GenuineEventRecord,
+    UniverseChangeEventRecord,
+    HealthHeartbeatRecord,
 )
 from src.phase10.acquisition.anti_synthetic_guard import AntiSyntheticGuard
 
@@ -129,7 +131,12 @@ class Phase10A5DbStore:
                 total_bytes_received BIGINT,
                 disconnect_count INTEGER,
                 reconnect_count INTEGER,
-                status VARCHAR
+                status VARCHAR,
+                markets_count INTEGER DEFAULT 0,
+                tokens_count INTEGER DEFAULT 0,
+                messages_rejected INTEGER DEFAULT 0,
+                book_states_count INTEGER DEFAULT 0,
+                trades_count INTEGER DEFAULT 0
             );
 
             -- 7. Data Quality Records Table
@@ -155,7 +162,56 @@ class Phase10A5DbStore:
                 affected_entity VARCHAR,
                 event_created_timestamp TIMESTAMP
             );
+
+            -- 9. Universe Change Events Table (Phase 10A.5c)
+            CREATE TABLE IF NOT EXISTS phase10a5_universe_events (
+                event_id VARCHAR PRIMARY KEY,
+                timestamp TIMESTAMP,
+                session_id VARCHAR,
+                market_id VARCHAR,
+                token_id VARCHAR,
+                market_added VARCHAR,
+                market_removed VARCHAR,
+                reason VARCHAR
+            );
+
+            -- 10. Long-Run Health Heartbeat Metrics Table (Phase 10A.5c)
+            CREATE TABLE IF NOT EXISTS phase10a5_health_metrics (
+                heartbeat_id VARCHAR PRIMARY KEY,
+                timestamp TIMESTAMP,
+                session_id VARCHAR,
+                elapsed_seconds DOUBLE,
+                messages_per_hour DOUBLE,
+                books_per_hour DOUBLE,
+                trades_per_hour DOUBLE,
+                active_markets INTEGER,
+                active_tokens INTEGER,
+                disconnects INTEGER,
+                reconnects INTEGER,
+                downtime_seconds DOUBLE,
+                sequence_gaps INTEGER,
+                malformed_messages INTEGER,
+                one_sided_books INTEGER,
+                crossed_books INTEGER,
+                skew_mean_ms DOUBLE,
+                skew_median_ms DOUBLE,
+                skew_p95_ms DOUBLE,
+                skew_p99_ms DOUBLE,
+                negative_skew_count INTEGER,
+                disk_storage_bytes BIGINT
+            );
         """)
+
+        # Gracefully migrate phase10a5_connection_sessions if created with fewer columns
+        try:
+            conn.execute("ALTER TABLE phase10a5_connection_sessions ADD COLUMN IF NOT EXISTS markets_count INTEGER DEFAULT 0;")
+            conn.execute("ALTER TABLE phase10a5_connection_sessions ADD COLUMN IF NOT EXISTS tokens_count INTEGER DEFAULT 0;")
+            conn.execute("ALTER TABLE phase10a5_connection_sessions ADD COLUMN IF NOT EXISTS messages_rejected INTEGER DEFAULT 0;")
+            conn.execute("ALTER TABLE phase10a5_connection_sessions ADD COLUMN IF NOT EXISTS book_states_count INTEGER DEFAULT 0;")
+            conn.execute("ALTER TABLE phase10a5_connection_sessions ADD COLUMN IF NOT EXISTS trades_count INTEGER DEFAULT 0;")
+        except Exception as e:
+            logger.debug(f"Column migration check: {e}")
+
         logger.info("Phase 10A.5 DuckDB schema initialized successfully.")
 
     def persist_raw_messages(self, conn: duckdb.DuckDBPyConnection, records: List[RawMessageRecord]) -> int:
@@ -245,12 +301,44 @@ class Phase10A5DbStore:
 
     def persist_session(self, conn: duckdb.DuckDBPyConnection, session: ConnectionSessionRecord) -> None:
         conn.execute("""
-            INSERT OR REPLACE INTO phase10a5_connection_sessions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO phase10a5_connection_sessions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             session.session_id, session.start_timestamp, session.end_timestamp,
             session.endpoint_url, session.resolved_ip, int(session.total_messages_received),
             int(session.total_messages_persisted), int(session.total_bytes_received),
-            int(session.disconnect_count), int(session.reconnect_count), session.status
+            int(session.disconnect_count), int(session.reconnect_count), session.status,
+            int(session.markets_count), int(session.tokens_count),
+            int(session.messages_rejected), int(session.book_states_count),
+            int(session.trades_count)
+        ))
+
+    def persist_universe_events(self, conn: duckdb.DuckDBPyConnection, events: List[UniverseChangeEventRecord]) -> int:
+        if not events:
+            return 0
+        rows = []
+        for e in events:
+            rows.append((
+                e.event_id, e.timestamp, e.session_id, e.market_id,
+                e.token_id, e.market_added, e.market_removed, e.reason
+            ))
+        conn.executemany("""
+            INSERT OR REPLACE INTO phase10a5_universe_events VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, rows)
+        return len(rows)
+
+    def persist_health_heartbeat(self, conn: duckdb.DuckDBPyConnection, hb: HealthHeartbeatRecord) -> None:
+        conn.execute("""
+            INSERT OR REPLACE INTO phase10a5_health_metrics VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            hb.heartbeat_id, hb.timestamp, hb.session_id, float(hb.elapsed_seconds),
+            float(hb.messages_per_hour), float(hb.books_per_hour), float(hb.trades_per_hour),
+            int(hb.active_markets), int(hb.active_tokens),
+            int(hb.disconnects), int(hb.reconnects), float(hb.downtime_seconds),
+            int(hb.sequence_gaps), int(hb.malformed_messages),
+            int(hb.one_sided_books), int(hb.crossed_books),
+            float(hb.skew_mean_ms), float(hb.skew_median_ms),
+            float(hb.skew_p95_ms), float(hb.skew_p99_ms),
+            int(hb.negative_skew_count), int(hb.disk_storage_bytes)
         ))
 
     def persist_data_quality(self, conn: duckdb.DuckDBPyConnection, dq_records: List[DataQualityRecord]) -> int:
@@ -266,3 +354,4 @@ class Phase10A5DbStore:
             INSERT OR REPLACE INTO phase10a5_data_quality VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """, rows)
         return len(rows)
+

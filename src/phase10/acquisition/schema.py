@@ -116,6 +116,49 @@ class ConnectionSessionRecord:
     disconnect_count: int
     reconnect_count: int
     status: str                        # "CONNECTED", "DISCONNECTED", "COMPLETED", "FAILED"
+    markets_count: int = 0
+    tokens_count: int = 0
+    messages_rejected: int = 0
+    book_states_count: int = 0
+    trades_count: int = 0
+
+
+@dataclass
+class UniverseChangeEventRecord:
+    event_id: str
+    timestamp: datetime
+    session_id: str
+    market_id: str
+    token_id: str
+    market_added: Optional[str]
+    market_removed: Optional[str]
+    reason: str
+
+
+@dataclass
+class HealthHeartbeatRecord:
+    heartbeat_id: str
+    timestamp: datetime
+    session_id: str
+    elapsed_seconds: float
+    messages_per_hour: float
+    books_per_hour: float
+    trades_per_hour: float
+    active_markets: int
+    active_tokens: int
+    disconnects: int
+    reconnects: int
+    downtime_seconds: float
+    sequence_gaps: int
+    malformed_messages: int
+    one_sided_books: int
+    crossed_books: int
+    skew_mean_ms: float
+    skew_median_ms: float
+    skew_p95_ms: float
+    skew_p99_ms: float
+    negative_skew_count: int
+    disk_storage_bytes: int
 
 
 @dataclass
@@ -140,3 +183,4 @@ class GenuineEventRecord:
     description: str
     affected_entity: str
     event_created_timestamp: datetime
+

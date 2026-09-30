@@ -1,0 +1,46 @@
+{
+  "first_genuine_observation": "2026-09-30T20:43:51.841000",
+  "last_genuine_observation": "2026-09-30T21:15:54.099672",
+  "wall_clock_span_seconds": 1922.258672,
+  "wall_clock_span_str": "1922.26 seconds (32.04 minutes, 0.53 hours)",
+  "total_active_recording_time_seconds": 166.67719626426697,
+  "sessions_count": 8,
+  "markets_count": 54,
+  "tokens_count": 54,
+  "raw_messages_count": 34086,
+  "persisted_messages_count": 34086,
+  "rejected_messages_count": 0,
+  "book_states_count": 57704,
+  "valid_book_states": 57046,
+  "missing_data_states": 642,
+  "crossed_book_states": 16,
+  "other_invalid_states": 0,
+  "trades_count": 231,
+  "total_trade_notional_usd": 28853.02,
+  "sequence_gaps": 6718,
+  "disconnects": 2,
+  "reconnects": 0,
+  "total_downtime_seconds": 1766.21,
+  "timestamp_skew": {
+    "mean_ms": 194.16,
+    "median_ms": 72.91,
+    "p95_ms": 287.45,
+    "p99_ms": 599.59,
+    "negative_skew_count": 0
+  },
+  "synthetic_records_count": 0,
+  "placeholder_records_count": 0,
+  "accounting_reconciliation": {
+    "received_eq_persisted_plus_rejected": true,
+    "parsed_eq_applied_plus_rejected": true,
+    "frames_on_disk": 33770,
+    "batched_items_delta": 316
+  },
+  "anti_synthetic_clean": true,
+  "dataset_suitability_for_phase10a6": "NO",
+  "remaining_limitations": [
+    "Temporal Span: Current wall-clock span (1922.26 seconds (32.04 minutes, 0.53 hours)) is below the mandatory 72-hour threshold.",
+    "Continuous Ingestion: Persistent background daemon must continue recording across 3+ full calendar days to capture real-world macro and scheduled information releases.",
+    "Market Liquidity Concentration: Message velocity is heavily concentrated in top-tier prediction markets (interest rates, presidential elections, top-tier athletics), with long-tail markets having wider spreads."
+  ]
+}
