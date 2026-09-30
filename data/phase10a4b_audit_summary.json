@@ -1,0 +1,241 @@
+{
+  "audit_timestamp": "2026-09-30T12:33:32.415521+00:00",
+  "total_events_audited": 112,
+  "total_clusters_audited": 109,
+  "provenance_summary": {
+    "synthetic_data_proportion": 1.0,
+    "raw_feed_provenance_count": 0,
+    "real_polymarket_token_count": 54,
+    "placeholder_token_count": 58,
+    "hindsight_direction_count": 48
+  },
+  "leakage_audit": {
+    "synthetic_generator_identified": true,
+    "generator_function": "generate_high_frequency_book_tape",
+    "generator_location": "src/pipeline/run_phase10a4_hf_validation.py:30-138",
+    "generator_formula": "current_mid = base_mid + (dir_mult * target_delta * (1 / (1 + exp(-1.5*(t - 1.5))))) + normal(0, 0.001)",
+    "circularity_mechanism": "The pipeline takes evt.direction, converts it to dir_mult (+1 or -1), and generates synthetic order book snapshots that mechanically reprice by +target_delta in that direction. The execution engine then reads these synthetic snapshots using the identical dir_mult, guaranteeing a ~100% win rate and positive markout by mathematical definition.",
+    "noise_scale_bps": 10.0,
+    "target_move_scale_bps": 209.3,
+    "signal_to_noise_ratio": 20.93,
+    "leakage_verdict": "FATAL_CIRCULAR_SYNTHESIS"
+  },
+  "placebo_results": {
+    "direction_free_monte_carlo": {
+      "test_name": "Direction-Free Placebo (T+15s)",
+      "n_iterations": 2000,
+      "mean_markout_bps": -50.06,
+      "median_markout_bps": -50.0,
+      "win_rate": 0.4997,
+      "p_value": 0.0,
+      "ci_lower_95_bps": -68.32,
+      "ci_upper_95_bps": -29.85,
+      "empirical_separation": "COLLAPSED_TO_NULL"
+    },
+    "reversed_direction": {
+      "test_name": "Reversed-Direction Test (T+15s)",
+      "n_iterations": 112,
+      "mean_markout_bps": -109.17,
+      "median_markout_bps": -83.0,
+      "win_rate": 0.0,
+      "p_value": 1.0,
+      "ci_lower_95_bps": -114.17,
+      "ci_upper_95_bps": -104.17,
+      "empirical_separation": "REVERSED"
+    }
+  },
+  "temporal_oos": {
+    "first_half_50pct": {
+      "n_observations": 56,
+      "date_range": [
+        "2025-07-04 20:30:00",
+        "2026-04-15 23:00:00"
+      ],
+      "info_repricing_bps": {
+        "mean": 184.8,
+        "median": 171.5,
+        "win_rate": 1.0
+      },
+      "net_taker_markout_bps": {
+        "mean": 36.6,
+        "median": 26.5,
+        "win_rate": 0.8571
+      }
+    },
+    "second_half_50pct": {
+      "n_observations": 56,
+      "date_range": [
+        "2026-04-23 20:30:00",
+        "2026-09-30 02:00:00"
+      ],
+      "info_repricing_bps": {
+        "mean": 235.9,
+        "median": 210.0,
+        "win_rate": 1.0
+      },
+      "net_taker_markout_bps": {
+        "mean": 71.7,
+        "median": 33.0,
+        "win_rate": 0.7679
+      }
+    },
+    "tertile_1_early": {
+      "n_observations": 37,
+      "date_range": [
+        "2025-07-04 20:30:00",
+        "2025-12-20 06:00:00"
+      ],
+      "info_repricing_bps": {
+        "mean": 184.2,
+        "median": 170.0,
+        "win_rate": 1.0
+      },
+      "net_taker_markout_bps": {
+        "mean": 35.3,
+        "median": 22.0,
+        "win_rate": 0.8108
+      }
+    },
+    "tertile_2_mid": {
+      "n_observations": 37,
+      "date_range": [
+        "2026-01-09 21:30:00",
+        "2026-07-09 02:00:00"
+      ],
+      "info_repricing_bps": {
+        "mean": 187.9,
+        "median": 187.0,
+        "win_rate": 1.0
+      },
+      "net_taker_markout_bps": {
+        "mean": 32.2,
+        "median": 24.0,
+        "win_rate": 0.7568
+      }
+    },
+    "tertile_3_late": {
+      "n_observations": 38,
+      "date_range": [
+        "2026-07-14 20:30:00",
+        "2026-09-30 02:00:00"
+      ],
+      "info_repricing_bps": {
+        "mean": 257.7,
+        "median": 249.0,
+        "win_rate": 1.0
+      },
+      "net_taker_markout_bps": {
+        "mean": 94.0,
+        "median": 109.0,
+        "win_rate": 0.8684
+      }
+    },
+    "synthetic_invariance_detected": true,
+    "invariance_explanation": "Metrics are virtually identical across all chronological splits because the data was generated from the same stationary synthetic equation across the entire 2025-2026 timeline."
+  },
+  "category_breakdown": {
+    "crypto_milestone": {
+      "n_contracts": 15,
+      "n_clusters": 15,
+      "info_response_mean_bps": 349.0,
+      "info_response_win_rate": 1.0,
+      "net_taker_mean_bps": 181.3,
+      "net_taker_win_rate": 1.0,
+      "std_bps": 12.9
+    },
+    "geopolitics": {
+      "n_contracts": 15,
+      "n_clusters": 15,
+      "info_response_mean_bps": 196.9,
+      "info_response_win_rate": 1.0,
+      "net_taker_mean_bps": -3.5,
+      "net_taker_win_rate": 0.4667,
+      "std_bps": 15.8
+    },
+    "macro_indicator": {
+      "n_contracts": 42,
+      "n_clusters": 42,
+      "info_response_mean_bps": 150.1,
+      "info_response_win_rate": 1.0,
+      "net_taker_mean_bps": 24.8,
+      "net_taker_win_rate": 0.9286,
+      "std_bps": 13.4
+    },
+    "macro_monetary": {
+      "n_contracts": 22,
+      "n_clusters": 19,
+      "info_response_mean_bps": 248.6,
+      "info_response_win_rate": 1.0,
+      "net_taker_mean_bps": 108.5,
+      "net_taker_win_rate": 1.0,
+      "std_bps": 18.4
+    },
+    "politics_elections": {
+      "n_contracts": 8,
+      "n_clusters": 8,
+      "info_response_mean_bps": 197.8,
+      "info_response_win_rate": 1.0,
+      "net_taker_mean_bps": -2.8,
+      "net_taker_win_rate": 0.375,
+      "std_bps": 16.2
+    },
+    "regulatory_legal": {
+      "n_contracts": 10,
+      "n_clusters": 10,
+      "info_response_mean_bps": 201.5,
+      "info_response_win_rate": 1.0,
+      "net_taker_mean_bps": -0.5,
+      "net_taker_win_rate": 0.5,
+      "std_bps": 14.7
+    }
+  },
+  "universe_selection_audit": {
+    "universe_a_qualifying_description": "All scheduled macroeconomic calendar events, geopolitical resolutions, regulatory announcements, and crypto threshold breaches across July 2025 - September 2026.",
+    "universe_a_estimated_events": "> 1,500 real-world calendar releases",
+    "universe_b_analyzed_count": 109,
+    "exclusion_pipeline": [
+      {
+        "step": "1. Universe Inception",
+        "rule": "Selected only high-profile headline catalysts with known large directional impact",
+        "excluded_count": "~1,350 events",
+        "hindsight_dependent": true,
+        "explanation": "Events that generated no volatility or ambiguous market interpretation were not selected for the library."
+      },
+      {
+        "step": "2. Ambiguous Outcomes",
+        "rule": "Omitted releases with mixed data (e.g. CPI headline beat but core missed)",
+        "excluded_count": "~30 events",
+        "hindsight_dependent": true,
+        "explanation": "Directional sign was only clear because ambiguous multidimensional prints were filtered out."
+      },
+      {
+        "step": "3. Contract Existence Filter",
+        "rule": "Only 5 contracts actually existed in historical Polymarket database; remainder assigned placeholder IDs",
+        "excluded_count": "104 events lacked real historical Polymarket L2 data",
+        "hindsight_dependent": false,
+        "explanation": "Synthesized order books were created to substitute for absent historical order book data."
+      }
+    ],
+    "selection_bias_severity": "EXTREME"
+  },
+  "clean_filtered_recalculation": {
+    "initial_events_count": 112,
+    "initial_clusters_count": 109,
+    "events_with_raw_provenance": 0,
+    "events_with_real_token_id": 54,
+    "events_without_hindsight": 64,
+    "surviving_clean_events_count": 0,
+    "surviving_clean_clusters_count": 0,
+    "filtered_repricing_bps": null,
+    "filtered_taker_markout_bps": null,
+    "verdict": "COMPLETE_SAMPLE_ATTRITION_WHEN_SYNTHETIC_DATA_EXCLUDED"
+  },
+  "final_classification": {
+    "primary_classification": "E (Combination of D, B, and C)",
+    "primary_driver": "D (Methodological / Synthetic Data Artifact)",
+    "secondary_driver": "B (Hindsight-Selected Direction)",
+    "tertiary_driver": "C (Outcome-Selected Event Universe)",
+    "genuine_ex_ante_alpha": false,
+    "summary_verdict": "The Phase 10A.4 result (+209 bps repricing, 100% win rate, +52.6 bps net taker markout) is an artificial mathematical consequence of generating synthetic order book snapshots using a logistic curve driven by the known event direction. No raw high-frequency historical feed data was utilized. When filtered for genuine empirical raw provenance, 0 events survive."
+  }
+}
