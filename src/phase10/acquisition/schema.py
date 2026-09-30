@@ -28,6 +28,7 @@ class RawMessageRecord:
     raw_message_json: str
     sha256_hash: str
     raw_file_path: str
+    message_seq: int = 0
 
 
 @dataclass

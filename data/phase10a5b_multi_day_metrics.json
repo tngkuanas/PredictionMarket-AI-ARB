@@ -1,0 +1,39 @@
+{
+  "start_timestamp": "2026-09-30T12:58:13.793977+00:00",
+  "end_timestamp": "2026-09-30T12:59:33.691823+00:00",
+  "total_duration_sec": 79.897846,
+  "sessions_count": 2,
+  "reconnects": 0,
+  "disconnects": 0,
+  "sequence_gaps": 0,
+  "unique_markets": 20,
+  "unique_tokens": 40,
+  "reconciliation": {
+    "is_clean": true,
+    "frames_on_disk": 25457,
+    "batched_items_delta": 273,
+    "total_messages_received": 25730,
+    "messages_persisted": 25730,
+    "explicitly_rejected": 0,
+    "ingestion_balance": 0,
+    "book_messages": 25574,
+    "trade_messages": 156,
+    "reconstructed_snapshots": 41342,
+    "snapshot_breakdown": {
+      "valid": 40866,
+      "crossed": 14,
+      "one_sided_missing_depth": 462,
+      "invalid": 0
+    },
+    "snapshot_balance": 0,
+    "unexplained_discrepancies": 0
+  },
+  "anti_synthetic_certification": {
+    "clean": true,
+    "violations": []
+  },
+  "total_trades": 60,
+  "total_trade_volume_usd": 8791.76,
+  "total_snapshots": 11926,
+  "total_book_updates": 11726
+}

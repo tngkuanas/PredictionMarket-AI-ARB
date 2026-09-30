@@ -38,11 +38,16 @@ class AntiSyntheticGuard:
                 f"expected {raw_rec.sha256_hash}, computed {computed_sha}"
             )
 
-        # Check raw file path existence
-        if raw_rec.raw_file_path and not Path(raw_rec.raw_file_path).exists():
-            raise SyntheticDataViolationError(
-                f"Raw file {raw_rec.raw_file_path} does not exist on disk for message {raw_rec.message_id}"
-            )
+        # Check raw file path existence (with path cache to avoid thousands of disk stat calls)
+        if raw_rec.raw_file_path:
+            if raw_rec.raw_file_path not in getattr(cls, "_checked_paths", set()):
+                if not Path(raw_rec.raw_file_path).exists():
+                    raise SyntheticDataViolationError(
+                        f"Raw file {raw_rec.raw_file_path} does not exist on disk for message {raw_rec.message_id}"
+                    )
+                if not hasattr(cls, "_checked_paths"):
+                    cls._checked_paths = set()
+                cls._checked_paths.add(raw_rec.raw_file_path)
 
         # Check for placeholder tokens
         if raw_rec.token_id:

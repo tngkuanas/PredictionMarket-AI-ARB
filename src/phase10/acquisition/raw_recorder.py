@@ -70,11 +70,11 @@ class RawMarketDataRecorder:
         try:
             parsed = json.loads(raw_text)
             if isinstance(parsed, list):
-                for item in parsed:
-                    rec = self._build_record(item, now, sha)
+                for idx, item in enumerate(parsed):
+                    rec = self._build_record(item, now, sha, item_idx=idx)
                     records.append(rec)
             elif isinstance(parsed, dict):
-                rec = self._build_record(parsed, now, sha)
+                rec = self._build_record(parsed, now, sha, item_idx=0)
                 records.append(rec)
         except json.JSONDecodeError as e:
             logger.warning(f"Malformed JSON received: {e}")
@@ -96,7 +96,7 @@ class RawMarketDataRecorder:
         self.buffered_raw_records.extend(records)
         return records
 
-    def _build_record(self, item: Dict[str, Any], receive_ts: datetime, sha: str) -> RawMessageRecord:
+    def _build_record(self, item: Dict[str, Any], receive_ts: datetime, sha: str, item_idx: int = 0) -> RawMessageRecord:
         msg_type = str(item.get("event_type", "unknown"))
         market_id = item.get("market")
         token_id = item.get("asset_id")
@@ -119,7 +119,7 @@ class RawMarketDataRecorder:
         item_sha = hashlib.sha256(json_str.encode("utf-8")).hexdigest()
 
         return RawMessageRecord(
-            message_id=f"msg_{self.session_id}_{self._message_counter}_{len(self.buffered_raw_records)}",
+            message_id=f"msg_{self.session_id}_{self._message_counter}_{item_idx}",
             ingestion_session_id=self.session_id,
             venue="polymarket",
             market_id=str(market_id) if market_id else None,
@@ -129,7 +129,8 @@ class RawMarketDataRecorder:
             exchange_timestamp=exch_ts,
             raw_message_json=json_str,
             sha256_hash=item_sha,
-            raw_file_path=str(self.jsonl_file_path)
+            raw_file_path=str(self.jsonl_file_path),
+            message_seq=self._message_counter
         )
 
     async def stream_market_data(
