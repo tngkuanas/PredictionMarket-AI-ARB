@@ -527,7 +527,15 @@ class MultiSessionContinuousRecorder:
 
     def audit_full_dataset(self) -> Dict[str, Any]:
         """Performs comprehensive multi-day data integrity, sequence, and accounting audit across all sessions."""
-        conn = duckdb.connect(self.db_path)
+        conn = None
+        for _ in range(15):
+            try:
+                conn = duckdb.connect(self.db_path, read_only=True)
+                break
+            except Exception:
+                time.sleep(0.3)
+        if conn is None:
+            conn = duckdb.connect(self.db_path, read_only=True)
         try:
             # 1. Timestamps & Wall-clock span
             ts_res = conn.execute("""

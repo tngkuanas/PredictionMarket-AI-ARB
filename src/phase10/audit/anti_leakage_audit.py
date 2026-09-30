@@ -88,6 +88,15 @@ class AntiLeakageAuditor:
         self.dataset_loader = HighFrequencyEventDataset(db_path=db_path)
         self.engine = HighFrequencyExecutionEngine()
 
+    def _get_read_conn(self):
+        """Connects in read_only mode with backoff retries to tolerate concurrent background writes."""
+        for _ in range(15):
+            try:
+                return duckdb.connect(self.db_path, read_only=True)
+            except Exception:
+                time.sleep(0.3)
+        return duckdb.connect(self.db_path, read_only=True)
+
     def audit_event_provenance(self, events: List[HighFrequencyEvent]) -> List[EventProvenanceRecord]:
         """Audits every event for raw provenance, token authenticity, and knowability."""
         provenance_records = []
@@ -178,7 +187,7 @@ class AntiLeakageAuditor:
     ) -> PlaceboAuditResult:
         """Runs a Monte Carlo direction-free placebo test by randomizing trade direction."""
         np.random.seed(random_seed)
-        conn = duckdb.connect(self.db_path, read_only=True)
+        conn = self._get_read_conn()
         try:
             # Query the stored taker markouts from DuckDB
             df_takers = conn.execute("""
@@ -247,7 +256,7 @@ class AntiLeakageAuditor:
 
     def run_reversed_direction_test(self) -> PlaceboAuditResult:
         """Simulates trading strictly in the reverse direction of the event."""
-        conn = duckdb.connect(self.db_path, read_only=True)
+        conn = self._get_read_conn()
         try:
             df = conn.execute("""
                 SELECT quantity_b_taker_markout, net_taker_markout
@@ -282,7 +291,7 @@ class AntiLeakageAuditor:
 
     def run_temporal_out_of_sample_split(self) -> Dict[str, Any]:
         """Evaluates results across chronological sub-periods."""
-        conn = duckdb.connect(self.db_path, read_only=True)
+        conn = self._get_read_conn()
         try:
             df = conn.execute("""
                 SELECT e.timestamp_publication, e.event_cluster_id, e.event_category,
@@ -338,7 +347,7 @@ class AntiLeakageAuditor:
 
     def run_event_category_breakdown(self) -> Dict[str, Any]:
         """Stratifies results across independent event categories."""
-        conn = duckdb.connect(self.db_path, read_only=True)
+        conn = self._get_read_conn()
         try:
             df = conn.execute("""
                 SELECT e.event_category, e.event_cluster_id,
