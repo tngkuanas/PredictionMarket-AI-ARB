@@ -88,6 +88,19 @@ from src.cross_venue.provenance_auditor import (
     ObservationProvenanceRecord,
     AdversarialProvenanceAuditor,
 )
+from src.cross_venue.universe_expansion import (
+    CredentialFailureCategory,
+    KalshiCredentialStatusRecord,
+    KalshiCredentialGate,
+    ExpandedKalshiMarketRecord,
+    ExpandedMarketUniverseCollector,
+    DeterministicMappingRecord,
+    ExpandedCrossVenuePipeline,
+    MappingVerificationError,
+    IndependentMappingVerifier,
+    ContaminationError,
+    ProductionContaminationGuard,
+)
 
 __all__ = [
     "EquivalenceClass",
@@ -164,5 +177,16 @@ __all__ = [
     "AuditVerdict",
     "ObservationProvenanceRecord",
     "AdversarialProvenanceAuditor",
+    "CredentialFailureCategory",
+    "KalshiCredentialStatusRecord",
+    "KalshiCredentialGate",
+    "ExpandedKalshiMarketRecord",
+    "ExpandedMarketUniverseCollector",
+    "DeterministicMappingRecord",
+    "ExpandedCrossVenuePipeline",
+    "MappingVerificationError",
+    "IndependentMappingVerifier",
+    "ContaminationError",
+    "ProductionContaminationGuard",
 ]
 

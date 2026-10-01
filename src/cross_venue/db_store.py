@@ -547,6 +547,49 @@ class CrossVenueDBStore:
             summary_json VARCHAR,
             created_at TIMESTAMP
         );
+
+        -- Phase 10A.6K Universe Expansion & Mapping Audit Tables
+        CREATE TABLE IF NOT EXISTS phase10a6k_deterministic_mappings (
+            mapping_id VARCHAR PRIMARY KEY,
+            polymarket_contract_id VARCHAR,
+            kalshi_contract_id VARCHAR,
+            canonical_polymarket_json VARCHAR,
+            canonical_kalshi_json VARCHAR,
+            terms_hash_polymarket VARCHAR,
+            terms_hash_kalshi VARCHAR,
+            equivalence_class VARCHAR,
+            mapping_status VARCHAR,
+            outcome_transformation VARCHAR,
+            settlement_rule_comparison VARCHAR,
+            timezone_normalization VARCHAR,
+            inequality_comparison VARCHAR,
+            resolution_source_comparison VARCHAR,
+            revision_policy_comparison VARCHAR,
+            cancellation_policy_comparison VARCHAR,
+            mapping_version VARCHAR,
+            source_metadata_hash_poly VARCHAR,
+            source_metadata_hash_kalshi VARCHAR,
+            created_at TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS phase10a6k_rejection_audit (
+            audit_id VARCHAR PRIMARY KEY,
+            run_id VARCHAR,
+            rejection_reason VARCHAR,
+            rejection_count INTEGER,
+            created_at TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS phase10a6k_credential_audits (
+            audit_id VARCHAR PRIMARY KEY,
+            credentials_available BOOLEAN,
+            credential_source VARCHAR,
+            authentication_attempted BOOLEAN,
+            authentication_success BOOLEAN,
+            failure_category VARCHAR,
+            details_json VARCHAR,
+            created_at TIMESTAMP
+        );
         """
         conn = self._get_connection(read_only=False)
         try:
@@ -944,6 +987,13 @@ class CrossVenueDBStore:
         summary_dict: Dict[str, Any],
     ) -> None:
         """Appends all Phase 10A.6J empirical observation and calibration records."""
+        # Permanent Contamination Guard: reject fixture/synthetic data from entering production tables
+        is_prod = (Path(self.db_path).resolve() == Path(self.settings.db.db_path).resolve())
+        if is_prod:
+            from src.cross_venue.universe_expansion import ProductionContaminationGuard
+            for s in sync_observations:
+                ProductionContaminationGuard.assert_valid_production_observation(s, is_production_db=True)
+
         conn = self._get_connection(read_only=False)
         try:
             # 1. Calibration Run
@@ -1030,6 +1080,64 @@ class CrossVenueDBStore:
                     ll["classification"], ll["first_mover_venue"],
                     ll["second_mover_venue"], ll["lag_magnitude_ms"]
                 ])
+        finally:
+            conn.close()
+
+    def record_phase10a6k_mapping(self, rec: Any) -> None:
+        """Appends Phase 10A.6K deterministic mapping record."""
+        conn = self._get_connection(read_only=False)
+        try:
+            poly_json = json.dumps(rec.canonical_polymarket.model_dump() if hasattr(rec.canonical_polymarket, "model_dump") else rec.canonical_polymarket.__dict__, default=str)
+            kalshi_json = json.dumps(rec.canonical_kalshi.model_dump() if hasattr(rec.canonical_kalshi, "model_dump") else rec.canonical_kalshi.__dict__, default=str)
+            conn.execute("""
+                INSERT OR REPLACE INTO phase10a6k_deterministic_mappings VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP
+                )
+            """, [
+                rec.mapping_id, rec.polymarket_contract_id, rec.kalshi_contract_id,
+                poly_json, kalshi_json,
+                rec.economic_terms_hash_polymarket, rec.economic_terms_hash_kalshi,
+                rec.equivalence_class.value if hasattr(rec.equivalence_class, "value") else str(rec.equivalence_class),
+                rec.mapping_status.value if hasattr(rec.mapping_status, "value") else str(rec.mapping_status),
+                rec.outcome_transformation, rec.settlement_rule_comparison,
+                rec.timezone_normalization, rec.inequality_comparison,
+                rec.resolution_source_comparison, rec.revision_policy_comparison,
+                rec.cancellation_policy_comparison, rec.mapping_version,
+                rec.source_metadata_hash_poly, rec.source_metadata_hash_kalshi
+            ])
+        finally:
+            conn.close()
+
+    def record_phase10a6k_rejection_audit(self, run_id: str, rejection_counts: Dict[str, int]) -> None:
+        """Appends Phase 10A.6K 15-reason rejection accounting."""
+        conn = self._get_connection(read_only=False)
+        try:
+            for reason, count in rejection_counts.items():
+                audit_id = f"audit_rej_{run_id}_{reason}"
+                conn.execute("""
+                    INSERT OR REPLACE INTO phase10a6k_rejection_audit VALUES (
+                        ?, ?, ?, ?, CURRENT_TIMESTAMP
+                    )
+                """, [audit_id, run_id, reason, count])
+        finally:
+            conn.close()
+
+    def record_phase10a6k_credential_audit(self, cred_record: Any) -> None:
+        """Appends Phase 10A.6K non-sensitive credential audit record."""
+        conn = self._get_connection(read_only=False)
+        try:
+            audit_id = f"cred_audit_{int(cred_record.timestamp.timestamp())}"
+            details_json = json.dumps(cred_record.to_safe_dict(), default=str)
+            conn.execute("""
+                INSERT OR REPLACE INTO phase10a6k_credential_audits VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP
+                )
+            """, [
+                audit_id, cred_record.credentials_available,
+                cred_record.credential_source, cred_record.authentication_attempted,
+                cred_record.authentication_success, cred_record.failure_category,
+                details_json
+            ])
         finally:
             conn.close()
 

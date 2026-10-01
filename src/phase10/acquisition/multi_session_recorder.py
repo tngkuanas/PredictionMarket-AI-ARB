@@ -483,7 +483,23 @@ class MultiSessionContinuousRecorder:
 
     def audit_dataset_accounting(self) -> Dict[str, Any]:
         """Audits database records and validates exact message accounting reconciliation."""
-        conn = duckdb.connect(self.db_path)
+        import time, shutil, tempfile, os
+        conn = None
+        tmp_cleanup_path = None
+        for _ in range(5):
+            try:
+                conn = duckdb.connect(self.db_path, read_only=True)
+                break
+            except Exception:
+                time.sleep(0.1)
+        if conn is None:
+            tmp = tempfile.NamedTemporaryFile(suffix=".duckdb", delete=False)
+            tmp_cleanup_path = tmp.name
+            tmp.close()
+            if os.path.exists(tmp_cleanup_path):
+                os.unlink(tmp_cleanup_path)
+            shutil.copyfile(self.db_path, tmp_cleanup_path)
+            conn = duckdb.connect(tmp_cleanup_path, read_only=True)
         try:
             raw_cnt = conn.execute("SELECT count(*) FROM phase10a5_raw_messages").fetchone()[0]
             upd_cnt = conn.execute("SELECT count(*) FROM phase10a5_book_updates").fetchone()[0]
@@ -499,6 +515,11 @@ class MultiSessionContinuousRecorder:
 
         finally:
             conn.close()
+            if tmp_cleanup_path and os.path.exists(tmp_cleanup_path):
+                try:
+                    os.unlink(tmp_cleanup_path)
+                except Exception:
+                    pass
 
         # Count disk frames across stored raw session files
         disk_frames = 0
@@ -529,6 +550,7 @@ class MultiSessionContinuousRecorder:
         """Performs comprehensive multi-day data integrity, sequence, and accounting audit across all sessions."""
         import time, shutil, tempfile, os
         conn = None
+        tmp_cleanup_path = None
         for _ in range(5):
             try:
                 conn = duckdb.connect(self.db_path, read_only=True)
@@ -537,12 +559,12 @@ class MultiSessionContinuousRecorder:
                 time.sleep(0.1)
         if conn is None:
             tmp = tempfile.NamedTemporaryFile(suffix=".duckdb", delete=False)
-            tmp_path = tmp.name
+            tmp_cleanup_path = tmp.name
             tmp.close()
-            if os.path.exists(tmp_path):
-                os.unlink(tmp_path)
-            shutil.copyfile(self.db_path, tmp_path)
-            conn = duckdb.connect(tmp_path, read_only=True)
+            if os.path.exists(tmp_cleanup_path):
+                os.unlink(tmp_cleanup_path)
+            shutil.copyfile(self.db_path, tmp_cleanup_path)
+            conn = duckdb.connect(tmp_cleanup_path, read_only=True)
         try:
             # 1. Timestamps & Wall-clock span
             ts_res = conn.execute("""
@@ -656,6 +678,11 @@ class MultiSessionContinuousRecorder:
 
         finally:
             conn.close()
+            if tmp_cleanup_path and os.path.exists(tmp_cleanup_path):
+                try:
+                    os.unlink(tmp_cleanup_path)
+                except Exception:
+                    pass
 
         recon = self.audit_dataset_accounting()
         persisted_cnt = raw_cnt
