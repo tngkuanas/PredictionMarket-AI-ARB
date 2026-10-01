@@ -39,6 +39,12 @@ from src.cross_venue.cross_venue_adversarial import (
     AdversarialConfig,
     AdversarialAuditSummary,
 )
+from src.cross_venue.cross_venue_quote_adapter import MappedContractQuote
+from src.cross_venue.cross_venue_scanner import (
+    CrossVenueArbitrageCandidate,
+    ScanRunSummary,
+    ScannerConfig,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -333,6 +339,112 @@ class CrossVenueDBStore:
             config_json VARCHAR,
             created_at TIMESTAMP
         );
+
+        -- Phase 10A.6I Live Quote & Arbitrage Candidate Scanner Tables
+        CREATE TABLE IF NOT EXISTS phase10a6i_quote_observations (
+            observation_id VARCHAR PRIMARY KEY,
+            mapping_id VARCHAR,
+            venue VARCHAR,
+            venue_contract_id VARCHAR,
+            token_id VARCHAR,
+            economic_outcome VARCHAR,
+            local_receive_timestamp TIMESTAMP,
+            exchange_timestamp TIMESTAMP,
+            best_bid DOUBLE,
+            best_ask DOUBLE,
+            bid_depth DOUBLE,
+            ask_depth DOUBLE,
+            book_hash VARCHAR,
+            source_session_id VARCHAR,
+            source_message_id VARCHAR,
+            source_hash VARCHAR,
+            stale BOOLEAN,
+            created_at TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS phase10a6i_arbitrage_candidates (
+            candidate_id VARCHAR PRIMARY KEY,
+            mapping_id VARCHAR,
+            direction VARCHAR,
+            lifecycle_status VARCHAR,
+            rejection_reasons VARCHAR,
+            gross_edge_bps DOUBLE,
+            total_cost_bps DOUBLE,
+            net_edge_bps DOUBLE,
+            best_executable_size_usd DOUBLE,
+            vwap_poly DOUBLE,
+            vwap_kalshi DOUBLE,
+            combined_vwap DOUBLE,
+            sync_latency_delta_ms DOUBLE,
+            evaluation_timestamp TIMESTAMP,
+            reproducibility_hash VARCHAR,
+            created_at TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS phase10a6i_execution_analysis (
+            analysis_id VARCHAR PRIMARY KEY,
+            candidate_id VARCHAR,
+            mapping_id VARCHAR,
+            direction VARCHAR,
+            target_size_usd DOUBLE,
+            shares_filled_a DOUBLE,
+            shares_filled_b DOUBLE,
+            vwap_a DOUBLE,
+            vwap_b DOUBLE,
+            combined_vwap DOUBLE,
+            gross_edge_bps DOUBLE,
+            fee_bps DOUBLE,
+            slippage_bps DOUBLE,
+            latency_penalty_bps DOUBLE,
+            unwind_cost_bps DOUBLE,
+            total_cost_bps DOUBLE,
+            net_edge_bps DOUBLE,
+            is_fillable BOOLEAN,
+            is_edge_positive BOOLEAN,
+            rejection_reason VARCHAR,
+            created_at TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS phase10a6i_latency_analysis (
+            latency_record_id VARCHAR PRIMARY KEY,
+            candidate_id VARCHAR,
+            mapping_id VARCHAR,
+            latency_ms DOUBLE,
+            price_movement_allowance_bps DOUBLE,
+            net_edge_bps DOUBLE,
+            is_viable BOOLEAN,
+            created_at TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS phase10a6i_leg_risk_analysis (
+            leg_risk_record_id VARCHAR PRIMARY KEY,
+            candidate_id VARCHAR,
+            mapping_id VARCHAR,
+            case_name VARCHAR,
+            fill_pct_a DOUBLE,
+            fill_pct_b DOUBLE,
+            filled_usd DOUBLE,
+            unhedged_usd DOUBLE,
+            emergency_unwind_cost_usd DOUBLE,
+            worst_case_loss_usd DOUBLE,
+            deterministic_settlement_value_usd DOUBLE,
+            net_pnl_usd DOUBLE,
+            net_edge_bps DOUBLE,
+            created_at TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS phase10a6i_scan_runs (
+            scan_run_id VARCHAR PRIMARY KEY,
+            start_timestamp TIMESTAMP,
+            end_timestamp TIMESTAMP,
+            mappings_scanned_count INTEGER,
+            quotes_processed_count INTEGER,
+            candidates_detected_count INTEGER,
+            candidates_executable_count INTEGER,
+            candidates_rejected_count INTEGER,
+            config_hash VARCHAR,
+            created_at TIMESTAMP
+        );
         """
         conn = self._get_connection(read_only=False)
         try:
@@ -591,4 +703,102 @@ class CrossVenueDBStore:
                 ])
         finally:
             conn.close()
+
+    def record_scanner_run(
+        self,
+        summary: ScanRunSummary,
+        candidates: List[CrossVenueArbitrageCandidate],
+        quotes: Optional[List[MappedContractQuote]] = None,
+    ) -> None:
+        """Appends Phase 10A.6I scanner run, candidate, execution, latency, and leg-risk records."""
+        conn = self._get_connection(read_only=False)
+        try:
+            # 1. Scan Run Summary
+            conn.execute("""
+                INSERT OR REPLACE INTO phase10a6i_scan_runs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """, [
+                summary.scan_run_id, summary.start_timestamp, summary.end_timestamp,
+                summary.mappings_scanned_count, summary.quotes_processed_count,
+                summary.candidates_detected_count, summary.candidates_executable_count,
+                summary.candidates_rejected_count, summary.config_hash
+            ])
+
+            # 2. Quotes
+            if quotes:
+                for q in quotes:
+                    conn.execute("""
+                        INSERT OR IGNORE INTO phase10a6i_quote_observations VALUES (
+                            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP
+                        )
+                    """, [
+                        f"obs_{q.venue}_{q.source_message_id}", q.mapping_id, q.venue,
+                        q.venue_contract_id, q.token_id, q.economic_outcome,
+                        q.local_receive_timestamp, q.exchange_timestamp,
+                        q.best_bid, q.best_ask, q.bid_depth, q.ask_depth,
+                        q.book_hash, q.source_session_id, q.source_message_id,
+                        q.source_hash, q.stale
+                    ])
+
+            # 3. Candidates and Analysis
+            for cand in candidates:
+                conn.execute("""
+                    INSERT OR IGNORE INTO phase10a6i_arbitrage_candidates VALUES (
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP
+                    )
+                """, [
+                    cand.candidate_id, cand.mapping_id, cand.direction.value,
+                    cand.lifecycle_status.value, "; ".join(cand.rejection_reasons),
+                    cand.gross_edge_bps, cand.total_cost_bps, cand.best_net_edge_bps,
+                    cand.best_executable_size_usd, cand.vwap_poly, cand.vwap_kalshi,
+                    cand.combined_vwap, cand.sync_latency_delta_ms,
+                    cand.evaluation_timestamp, cand.reproducibility_hash
+                ])
+
+                # Execution analysis per size
+                for idx, size_exec in enumerate(cand.size_executions):
+                    conn.execute("""
+                        INSERT OR IGNORE INTO phase10a6i_execution_analysis VALUES (
+                            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP
+                        )
+                    """, [
+                        f"exec_{cand.candidate_id}_{idx}", cand.candidate_id, cand.mapping_id,
+                        cand.direction.value, size_exec.target_size_usd,
+                        size_exec.shares_filled_a, size_exec.shares_filled_b,
+                        size_exec.vwap_a, size_exec.vwap_b, size_exec.combined_vwap,
+                        size_exec.gross_edge_bps, size_exec.fee_bps, size_exec.slippage_bps,
+                        size_exec.latency_penalty_bps, size_exec.unwind_cost_bps,
+                        size_exec.total_cost_bps, size_exec.net_edge_bps,
+                        size_exec.is_fillable, size_exec.is_edge_positive,
+                        size_exec.rejection_reason or ""
+                    ])
+
+                # Latency analysis
+                for idx, lat_eval in enumerate(cand.latency_stress_results):
+                    conn.execute("""
+                        INSERT OR IGNORE INTO phase10a6i_latency_analysis VALUES (
+                            ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP
+                        )
+                    """, [
+                        f"lat_{cand.candidate_id}_{idx}", cand.candidate_id, cand.mapping_id,
+                        lat_eval.latency_ms, lat_eval.price_movement_allowance_bps,
+                        lat_eval.net_edge_bps, lat_eval.is_viable
+                    ])
+
+                # Leg risk analysis
+                for idx, leg_eval in enumerate(cand.leg_risk_results):
+                    conn.execute("""
+                        INSERT OR IGNORE INTO phase10a6i_leg_risk_analysis VALUES (
+                            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP
+                        )
+                    """, [
+                        f"leg_{cand.candidate_id}_{idx}", cand.candidate_id, cand.mapping_id,
+                        leg_eval.case_name, leg_eval.fill_pct_a, leg_eval.fill_pct_b,
+                        leg_eval.filled_usd, leg_eval.unhedged_usd,
+                        leg_eval.emergency_unwind_cost_usd, leg_eval.worst_case_loss_usd,
+                        leg_eval.deterministic_settlement_value_usd, leg_eval.net_pnl_usd,
+                        leg_eval.net_edge_bps
+                    ])
+        finally:
+            conn.close()
+
 
