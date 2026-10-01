@@ -69,6 +69,19 @@ from src.cross_venue.cross_venue_scanner import (
     ScanRunSummary,
     CrossVenueArbitrageScanner,
 )
+from src.cross_venue.cross_venue_observation_harness import (
+    KalshiCredentialStatus,
+    SyncDistributionMetrics,
+    QuoteStalenessMetrics,
+    BookUpdateFrequencyMetrics,
+    DisplayedDepthTier,
+    ObservedPostQuoteMovement,
+    CandidatePersistenceMetrics,
+    LeadLagClassification,
+    LeadLagObservationRecord,
+    ObservationHarnessConfig,
+    CrossVenueObservationHarness,
+)
 
 __all__ = [
     "EquivalenceClass",
@@ -130,5 +143,16 @@ __all__ = [
     "CrossVenueArbitrageCandidate",
     "ScanRunSummary",
     "CrossVenueArbitrageScanner",
+    "KalshiCredentialStatus",
+    "SyncDistributionMetrics",
+    "QuoteStalenessMetrics",
+    "BookUpdateFrequencyMetrics",
+    "DisplayedDepthTier",
+    "ObservedPostQuoteMovement",
+    "CandidatePersistenceMetrics",
+    "LeadLagClassification",
+    "LeadLagObservationRecord",
+    "ObservationHarnessConfig",
+    "CrossVenueObservationHarness",
 ]
 

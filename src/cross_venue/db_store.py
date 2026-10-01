@@ -19,6 +19,7 @@ Uses retry loops with backoff to prevent write-lock contention with background r
 Does NOT mutate historical Phase 10A/10A.5 tables.
 """
 
+from datetime import datetime, timezone
 import json
 import logging
 import os
@@ -445,6 +446,107 @@ class CrossVenueDBStore:
             config_hash VARCHAR,
             created_at TIMESTAMP
         );
+
+        -- Phase 10A.6J Live Observation & Friction Calibration Tables
+        CREATE TABLE IF NOT EXISTS phase10a6j_live_sessions (
+            session_id VARCHAR PRIMARY KEY,
+            session_type VARCHAR,
+            credential_status VARCHAR,
+            credential_source VARCHAR,
+            start_timestamp TIMESTAMP,
+            end_timestamp TIMESTAMP,
+            is_authenticated BOOLEAN,
+            config_hash VARCHAR,
+            created_at TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS phase10a6j_sync_observations (
+            observation_id VARCHAR PRIMARY KEY,
+            mapping_id VARCHAR,
+            poly_contract_id VARCHAR,
+            kalshi_contract_id VARCHAR,
+            poly_receive_timestamp TIMESTAMP,
+            kalshi_receive_timestamp TIMESTAMP,
+            poly_exchange_timestamp TIMESTAMP,
+            kalshi_exchange_timestamp TIMESTAMP,
+            skew_delta_ms DOUBLE,
+            poly_book_hash VARCHAR,
+            kalshi_book_hash VARCHAR,
+            source_session_id VARCHAR,
+            created_at TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS phase10a6j_friction_observations (
+            friction_id VARCHAR PRIMARY KEY,
+            observation_id VARCHAR,
+            mapping_id VARCHAR,
+            venue VARCHAR,
+            target_size_usd DOUBLE,
+            best_ask DOUBLE,
+            executable_vwap DOUBLE,
+            slippage_bps DOUBLE,
+            available_depth_usd DOUBLE,
+            unfilled_usd DOUBLE,
+            fee_bps DOUBLE,
+            quote_age_ms DOUBLE,
+            created_at TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS phase10a6j_latency_observations (
+            latency_id VARCHAR PRIMARY KEY,
+            observation_id VARCHAR,
+            mapping_id VARCHAR,
+            venue VARCHAR,
+            horizon_ms DOUBLE,
+            adverse_movement_bps DOUBLE,
+            created_at TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS phase10a6j_candidate_survival (
+            survival_id VARCHAR PRIMARY KEY,
+            observation_id VARCHAR,
+            mapping_id VARCHAR,
+            funnel_stage VARCHAR,
+            is_survived BOOLEAN,
+            gross_edge_bps DOUBLE,
+            net_edge_bps DOUBLE,
+            scanner_status VARCHAR,
+            rejection_reason VARCHAR,
+            created_at TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS phase10a6j_persistence_observations (
+            persistence_id VARCHAR PRIMARY KEY,
+            observation_id VARCHAR,
+            mapping_id VARCHAR,
+            horizon_ms DOUBLE,
+            is_positive_edge BOOLEAN,
+            edge_bps DOUBLE,
+            created_at TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS phase10a6j_lead_lag_observations (
+            lead_lag_id VARCHAR PRIMARY KEY,
+            mapping_id VARCHAR,
+            timestamp TIMESTAMP,
+            classification VARCHAR,
+            first_mover_venue VARCHAR,
+            second_mover_venue VARCHAR,
+            lag_magnitude_ms DOUBLE,
+            created_at TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS phase10a6j_calibration_runs (
+            run_id VARCHAR PRIMARY KEY,
+            start_timestamp TIMESTAMP,
+            end_timestamp TIMESTAMP,
+            mappings_observed_count INTEGER,
+            sync_observations_count INTEGER,
+            surviving_observations_count INTEGER,
+            config_hash VARCHAR,
+            summary_json VARCHAR,
+            created_at TIMESTAMP
+        );
         """
         conn = self._get_connection(read_only=False)
         try:
@@ -800,5 +902,136 @@ class CrossVenueDBStore:
                     ])
         finally:
             conn.close()
+
+    def record_observation_session(
+        self,
+        session_id: str,
+        session_type: str,
+        credential_status: str,
+        credential_source: str,
+        start_timestamp: datetime,
+        end_timestamp: Optional[datetime],
+        is_authenticated: bool,
+        config_hash: str,
+    ) -> None:
+        """Appends Phase 10A.6J session metadata."""
+        conn = self._get_connection(read_only=False)
+        try:
+            conn.execute("""
+                INSERT OR REPLACE INTO phase10a6j_live_sessions VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP
+                )
+            """, [
+                session_id, session_type, credential_status, credential_source,
+                start_timestamp, end_timestamp, is_authenticated, config_hash
+            ])
+        finally:
+            conn.close()
+
+    def record_observation_harness_run(
+        self,
+        run_id: str,
+        start_timestamp: datetime,
+        end_timestamp: datetime,
+        mappings_observed_count: int,
+        sync_observations: List[Dict[str, Any]],
+        friction_records: List[Dict[str, Any]],
+        latency_records: List[Dict[str, Any]],
+        survival_records: List[Dict[str, Any]],
+        persistence_records: List[Dict[str, Any]],
+        lead_lag_records: List[Dict[str, Any]],
+        config_hash: str,
+        summary_dict: Dict[str, Any],
+    ) -> None:
+        """Appends all Phase 10A.6J empirical observation and calibration records."""
+        conn = self._get_connection(read_only=False)
+        try:
+            # 1. Calibration Run
+            conn.execute("""
+                INSERT OR REPLACE INTO phase10a6j_calibration_runs VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP
+                )
+            """, [
+                run_id, start_timestamp, end_timestamp,
+                mappings_observed_count, len(sync_observations),
+                len([s for s in survival_records if s.get("stage") == "scanner_surviving_observations" and s.get("is_survived")]),
+                config_hash, json.dumps(summary_dict, default=str)
+            ])
+
+            # 2. Sync observations
+            for s in sync_observations:
+                conn.execute("""
+                    INSERT OR IGNORE INTO phase10a6j_sync_observations VALUES (
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP
+                    )
+                """, [
+                    s["observation_id"], s["mapping_id"], s["poly_contract_id"], s["kalshi_contract_id"],
+                    s["poly_receive_timestamp"], s["kalshi_receive_timestamp"],
+                    s["poly_exchange_timestamp"], s["kalshi_exchange_timestamp"],
+                    s["skew_delta_ms"], s["poly_book_hash"], s["kalshi_book_hash"], s["source_session_id"]
+                ])
+
+            # 3. Friction records
+            for f in friction_records:
+                conn.execute("""
+                    INSERT OR IGNORE INTO phase10a6j_friction_observations VALUES (
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP
+                    )
+                """, [
+                    f["friction_id"], f["observation_id"], f["mapping_id"], f["venue"],
+                    f["target_size_usd"], f["best_ask"], f["executable_vwap"],
+                    f["slippage_bps"], f["available_depth_usd"], f["unfilled_usd"],
+                    f["fee_bps"], f["quote_age_ms"]
+                ])
+
+            # 4. Latency adverse movement records
+            for lat in latency_records:
+                conn.execute("""
+                    INSERT OR IGNORE INTO phase10a6j_latency_observations VALUES (
+                        ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP
+                    )
+                """, [
+                    lat["latency_id"], lat["observation_id"], lat["mapping_id"],
+                    lat["venue"], lat["horizon_ms"], lat["adverse_movement_bps"]
+                ])
+
+            # 5. Candidate survival funnel records
+            for surv in survival_records:
+                conn.execute("""
+                    INSERT OR IGNORE INTO phase10a6j_candidate_survival VALUES (
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP
+                    )
+                """, [
+                    surv["survival_id"], surv["observation_id"], surv["mapping_id"],
+                    surv["funnel_stage"], surv["is_survived"],
+                    surv.get("gross_edge_bps", 0.0), surv.get("net_edge_bps", 0.0),
+                    surv.get("scanner_status", ""), surv.get("rejection_reason", "")
+                ])
+
+            # 6. Persistence records
+            for p in persistence_records:
+                conn.execute("""
+                    INSERT OR IGNORE INTO phase10a6j_persistence_observations VALUES (
+                        ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP
+                    )
+                """, [
+                    p["persistence_id"], p["observation_id"], p["mapping_id"],
+                    p["horizon_ms"], p["is_positive_edge"], p["edge_bps"]
+                ])
+
+            # 7. Lead lag records
+            for ll in lead_lag_records:
+                conn.execute("""
+                    INSERT OR IGNORE INTO phase10a6j_lead_lag_observations VALUES (
+                        ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP
+                    )
+                """, [
+                    ll["lead_lag_id"], ll["mapping_id"], ll["timestamp"],
+                    ll["classification"], ll["first_mover_venue"],
+                    ll["second_mover_venue"], ll["lag_magnitude_ms"]
+                ])
+        finally:
+            conn.close()
+
 
 
