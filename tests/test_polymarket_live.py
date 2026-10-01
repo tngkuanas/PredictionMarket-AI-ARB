@@ -30,10 +30,19 @@ def test_live_polymarket():
             if history:
                 print(f"  Latest price snapshot: {history[-1].timestamp} -> mid: {history[-1].yes_mid}")
 
-        db = get_db()
+        import tempfile, os
+        tmp = tempfile.NamedTemporaryFile(suffix=".duckdb", delete=False)
+        tmp_path = tmp.name
+        tmp.close()
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        from src.db.duckdb_store import DuckDBStore
+        db = DuckDBStore(db_path=tmp_path)
         db.save_markets(markets)
         saved = db.get_all_markets()
         print(f"\nDuckDB verified: {len(saved)} markets in database table.")
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
 
 if __name__ == "__main__":
     test_live_polymarket()

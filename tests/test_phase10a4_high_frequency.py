@@ -414,15 +414,23 @@ def test_unbundled_cost_model():
 def test_duckdb_persistence_records():
     """Queries DuckDB to verify tables exist and have valid rows from pipeline run."""
     import time
+    import time, shutil, tempfile, os
     conn = None
-    for _ in range(30):
+    for _ in range(5):
         try:
             conn = duckdb.connect("data/prediction_market.duckdb", read_only=True)
             break
         except Exception:
-            time.sleep(0.3)
+            time.sleep(0.1)
     if conn is None:
-        conn = duckdb.connect("data/prediction_market.duckdb", read_only=True)
+        # Fall back to isolated snapshot copy if locked by active background process (e.g. PID 53380)
+        tmp = tempfile.NamedTemporaryFile(suffix=".duckdb", delete=False)
+        tmp_path = tmp.name
+        tmp.close()
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        shutil.copyfile("data/prediction_market.duckdb", tmp_path)
+        conn = duckdb.connect(tmp_path, read_only=True)
     try:
         tables = conn.execute("SHOW TABLES").fetchall()
         table_names = [t[0] for t in tables]

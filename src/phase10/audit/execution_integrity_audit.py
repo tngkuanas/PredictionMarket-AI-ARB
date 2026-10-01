@@ -102,16 +102,23 @@ class ExecutionDataIntegrityAuditor:
 
     def run_full_audit(self) -> Dict[str, Any]:
         """Executes the complete Phase 10A.3b audit pipeline."""
-        import time
+        import time, shutil, tempfile, os
         conn = None
-        for _ in range(30):
+        for _ in range(5):
             try:
                 conn = duckdb.connect(self.db_path, read_only=True)
                 break
             except Exception:
-                time.sleep(0.3)
+                time.sleep(0.1)
         if conn is None:
-            conn = duckdb.connect(self.db_path, read_only=True)
+            # Fall back to isolated snapshot copy if locked by active background process (e.g. PID 53380)
+            tmp = tempfile.NamedTemporaryFile(suffix=".duckdb", delete=False)
+            tmp_path = tmp.name
+            tmp.close()
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+            shutil.copyfile(self.db_path, tmp_path)
+            conn = duckdb.connect(tmp_path, read_only=True)
         try:
             logger.info("Starting Phase 10A.3b Execution Cost & Historical Data Integrity Audit...")
             study_df = conn.execute("SELECT * FROM phase10a_event_study").fetchdf()

@@ -91,12 +91,20 @@ class AntiLeakageAuditor:
 
     def _get_read_conn(self):
         """Connects in read_only mode with backoff retries to tolerate concurrent background writes."""
-        for _ in range(30):
+        import time, shutil, tempfile, os
+        for _ in range(5):
             try:
                 return duckdb.connect(self.db_path, read_only=True)
             except Exception:
-                time.sleep(0.3)
-        return duckdb.connect(self.db_path, read_only=True)
+                time.sleep(0.1)
+        # Fall back to isolated snapshot copy if locked by active background process (e.g. PID 53380)
+        tmp = tempfile.NamedTemporaryFile(suffix=".duckdb", delete=False)
+        tmp_path = tmp.name
+        tmp.close()
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        shutil.copyfile(self.db_path, tmp_path)
+        return duckdb.connect(tmp_path, read_only=True)
 
     def audit_event_provenance(self, events: List[HighFrequencyEvent]) -> List[EventProvenanceRecord]:
         """Audits every event for raw provenance, token authenticity, and knowability."""

@@ -19,9 +19,22 @@ from src.phase10.response_study.db_store import Phase10A6DbStore
 from src.phase10.acquisition.anti_synthetic_guard import AntiSyntheticGuard
 
 
+import os
+import shutil
+import tempfile
+
 @pytest.fixture
 def db_path():
-    return "data/prediction_market.duckdb"
+    src_path = "data/prediction_market.duckdb"
+    tmp = tempfile.NamedTemporaryFile(suffix=".duckdb", delete=False)
+    tmp_path = tmp.name
+    tmp.close()
+    if os.path.exists(tmp_path):
+        os.unlink(tmp_path)
+    shutil.copyfile(src_path, tmp_path)
+    yield tmp_path
+    if os.path.exists(tmp_path):
+        os.unlink(tmp_path)
 
 
 def test_mandatory_data_span_auditor(db_path):
