@@ -36,6 +36,22 @@ from src.cross_venue.cross_venue_adversarial import (
     AdversarialAuditSummary,
     CrossVenueAdversarialEngine,
 )
+from src.cross_venue.cross_venue_market_discovery import (
+    RejectionReason,
+    CandidateFilterStatus,
+    ContractCardinality,
+    ContractStatus,
+    DiscoveryConfig,
+    ConservativeTextNormalizer,
+    PolymarketCanonicalAdapter,
+    KalshiCanonicalAdapter,
+    MarketCandidatePair,
+    MappingProvenance,
+    MappingVersionRecord,
+    CrossVenueMappingGraph,
+    DiscoveryRunSummary,
+    CrossVenueMarketDiscovery,
+)
 
 __all__ = [
     "EquivalenceClass",
@@ -70,4 +86,18 @@ __all__ = [
     "EdgeSurvivalBound",
     "AdversarialAuditSummary",
     "CrossVenueAdversarialEngine",
+    "RejectionReason",
+    "CandidateFilterStatus",
+    "ContractCardinality",
+    "ContractStatus",
+    "DiscoveryConfig",
+    "ConservativeTextNormalizer",
+    "PolymarketCanonicalAdapter",
+    "KalshiCanonicalAdapter",
+    "MarketCandidatePair",
+    "MappingProvenance",
+    "MappingVersionRecord",
+    "CrossVenueMappingGraph",
+    "DiscoveryRunSummary",
+    "CrossVenueMarketDiscovery",
 ]

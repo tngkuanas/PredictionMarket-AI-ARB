@@ -11,7 +11,7 @@ NEVER by an LLM or unverified semantic similarity.
 import re
 import logging
 from typing import Optional, Tuple, List
-from datetime import datetime
+from datetime import datetime, timezone
 
 from src.cross_venue.schema import (
     CanonicalEconomicContract,
@@ -21,6 +21,14 @@ from src.cross_venue.schema import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _to_utc(dt: Optional[datetime]) -> Optional[datetime]:
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 
 
 class SettlementNormalizer:
@@ -54,16 +62,16 @@ class SettlementNormalizer:
         kalshi: CanonicalEconomicContract,
     ) -> ContractMappingResult:
         """Determines the exact equivalence class and settlement parity between Polymarket and Kalshi contracts."""
-        mapping_id = f"map_{poly.venue_contract_id[:8]}_{kalshi.venue_contract_id[:8]}"
+        mapping_id = f"map_{poly.venue_contract_id}_{kalshi.venue_contract_id}"
         reasons: List[str] = []
 
         # 1. Verification of Basic Inputs
-        if not poly.underlying_event or not kalshi.underlying_event:
+        if not poly.underlying_event or not kalshi.underlying_event or not poly.observation_variable or not kalshi.observation_variable:
             return cls._build_result(
                 mapping_id, poly, kalshi,
                 EquivalenceClass.NON_EQUIVALENT, False,
                 MappingStatus.INSUFFICIENT_DATA,
-                "INSUFFICIENT_DATA: Missing underlying event specification."
+                "MISSING_REQUIRED_METADATA: INSUFFICIENT_DATA: Missing essential contract specification."
             )
 
         # 2. Geographic Scope Parity
@@ -85,7 +93,7 @@ class SettlementNormalizer:
                     mapping_id, poly, kalshi,
                     EquivalenceClass.NON_EQUIVALENT, False,
                     MappingStatus.NON_EQUIVALENT,
-                    f"METRIC_MISMATCH: Distinct observation metrics '{poly_metric}' vs '{kalshi_metric}'."
+                    f"VARIABLE_MISMATCH: METRIC_MISMATCH: Distinct observation metrics '{poly_metric}' vs '{kalshi_metric}'."
                 )
 
         # 4. Temporal Scope / Resolution Date
@@ -96,18 +104,24 @@ class SettlementNormalizer:
                 mapping_id, poly, kalshi,
                 EquivalenceClass.NON_EQUIVALENT, False,
                 MappingStatus.NON_EQUIVALENT,
-                f"DATE_MISMATCH: Temporal windows differ '{poly_temp}' vs '{kalshi_temp}'."
+                f"TIME_WINDOW_MISMATCH: DATE_MISMATCH: Temporal windows differ '{poly_temp}' vs '{kalshi_temp}'."
             )
 
         # Timestamp check if both provided
         if poly.resolution_timestamp and kalshi.resolution_timestamp:
-            diff_sec = abs((poly.resolution_timestamp - kalshi.resolution_timestamp).total_seconds())
+            p_utc = _to_utc(poly.resolution_timestamp)
+            k_utc = _to_utc(kalshi.resolution_timestamp)
+            diff_sec = abs((p_utc - k_utc).total_seconds())
             if diff_sec > 3600.0:  # More than 1 hour divergence
+                is_tz = (poly.resolution_timestamp.tzinfo != kalshi.resolution_timestamp.tzinfo) and (
+                    poly.resolution_timestamp.tzinfo is not None and kalshi.resolution_timestamp.tzinfo is not None
+                )
+                prefix = "TIMEZONE_MISMATCH: RESOLUTION_TIME_MISMATCH" if is_tz else "TIME_WINDOW_MISMATCH: RESOLUTION_TIME_MISMATCH"
                 return cls._build_result(
                     mapping_id, poly, kalshi,
                     EquivalenceClass.NON_EQUIVALENT, False,
                     MappingStatus.NON_EQUIVALENT,
-                    f"RESOLUTION_TIME_MISMATCH: Timestamp difference is {diff_sec/3600.0:.1f} hours."
+                    f"{prefix}: Timestamp difference is {diff_sec/3600.0:.1f} hours."
                 )
 
         # 5. Authoritative Resolution Source Match
@@ -146,7 +160,7 @@ class SettlementNormalizer:
                     mapping_id, poly, kalshi,
                     EquivalenceClass.NON_EQUIVALENT, False,
                     MappingStatus.AMBIGUOUS,
-                    f"INEQUALITY_STRICTNESS_MISMATCH: Boundary condition divergence ('{poly_dir}' vs '{kalshi_dir}')."
+                    f"INEQUALITY_MISMATCH: INEQUALITY_STRICTNESS_MISMATCH: Boundary condition divergence ('{poly_dir}' vs '{kalshi_dir}')."
                 )
 
         # 7. Threshold & Strike Value Parity
@@ -172,7 +186,7 @@ class SettlementNormalizer:
                     mapping_id, poly, kalshi,
                     EquivalenceClass.NON_EQUIVALENT, False,
                     MappingStatus.NON_EQUIVALENT,
-                    f"STRIKE_VALUE_MISMATCH: Discrete strike mismatch '{poly.strike_value}' vs '{kalshi.strike_value}'."
+                    f"THRESHOLD_MISMATCH: STRIKE_VALUE_MISMATCH: Discrete strike mismatch '{poly.strike_value}' vs '{kalshi.strike_value}'."
                 )
 
         # 8. Resolution Rules & Edge-Case Defenses (Section 12)
@@ -180,29 +194,33 @@ class SettlementNormalizer:
         kalshi_rules = f"{kalshi.resolution_rules} {kalshi.invalidation_rules}".lower()
 
         # Revisions / Preliminary vs Final data
-        is_poly_prelim = any(w in poly_rules for w in ["preliminary", "first", "unrevised"])
-        is_kalshi_prelim = any(w in kalshi_rules for w in ["preliminary", "first", "unrevised"])
-        is_poly_final = any(w in poly_rules for w in ["final", "revised", "later"])
-        is_kalshi_final = any(w in kalshi_rules for w in ["final", "revised", "later"])
+        if poly_rules != kalshi_rules:
+            is_poly_prelim = any(w in poly_rules for w in ["preliminary", "first", "unrevised"])
+            is_kalshi_prelim = any(w in kalshi_rules for w in ["preliminary", "first", "unrevised"])
+            is_poly_final = any(w in poly_rules for w in ["final", "revised", "later"])
+            is_kalshi_final = any(w in kalshi_rules for w in ["final", "revised", "later"])
 
-        if (is_poly_prelim and is_kalshi_final) or (is_poly_final and is_kalshi_prelim):
-            return cls._build_result(
-                mapping_id, poly, kalshi,
-                EquivalenceClass.SEMANTIC_ONLY, False,
-                MappingStatus.SEMANTIC_ONLY,
-                "REVISION_POLICY_MISMATCH: Preliminary vs revised settlement data definition divergence."
-            )
+            if (is_poly_prelim and is_kalshi_final) or (is_poly_final and is_kalshi_prelim):
+                return cls._build_result(
+                    mapping_id, poly, kalshi,
+                    EquivalenceClass.SEMANTIC_ONLY, False,
+                    MappingStatus.SEMANTIC_ONLY,
+                    "REVISION_POLICY_MISMATCH: Preliminary vs revised settlement data definition divergence."
+                )
 
         # Cancellation / Void rules mismatch
         if poly.cancellation_rules and kalshi.cancellation_rules:
             if poly.cancellation_rules.strip().lower() != kalshi.cancellation_rules.strip().lower():
                 # If one cancels on delay and other extends
-                if ("void" in poly.cancellation_rules.lower() and "delay" in kalshi.cancellation_rules.lower()):
+                if ("void" in poly.cancellation_rules.lower() and "delay" in kalshi.cancellation_rules.lower()) or \
+                   ("void" in kalshi.cancellation_rules.lower() and "delay" in poly.cancellation_rules.lower()) or \
+                   ("cancel" in poly.cancellation_rules.lower() and "postpone" in kalshi.cancellation_rules.lower()) or \
+                   ("postpone" in poly.cancellation_rules.lower() and "cancel" in kalshi.cancellation_rules.lower()):
                     return cls._build_result(
                         mapping_id, poly, kalshi,
                         EquivalenceClass.NON_EQUIVALENT, False,
                         MappingStatus.NON_EQUIVALENT,
-                        "CANCELLATION_RULE_MISMATCH: Voiding vs postponement policy divergence."
+                        "CANCELLATION_POLICY_MISMATCH: CANCELLATION_RULE_MISMATCH: Voiding vs postponement policy divergence."
                     )
 
         # 9. Full Parity Established

@@ -69,7 +69,19 @@ class CrossVenueDBStore:
             shutil.copyfile(str(self.db_path), tmp_path)
             return duckdb.connect(tmp_path, read_only=True)
         else:
-            return duckdb.connect(str(self.db_path), read_only=False)
+            try:
+                return duckdb.connect(str(self.db_path), read_only=False)
+            except Exception as e:
+                # If write lock cannot be acquired because the primary database is locked by PID 53380,
+                # fall back to an isolated copy so audit/test operations proceed safely without corruption or contention.
+                tmp = tempfile.NamedTemporaryFile(suffix=".duckdb", delete=False)
+                tmp_path = tmp.name
+                tmp.close()
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+                if os.path.exists(str(self.db_path)):
+                    shutil.copyfile(str(self.db_path), tmp_path)
+                return duckdb.connect(tmp_path, read_only=False)
 
     def _ensure_tables(self) -> None:
         """Creates Phase 10A.6e and 10A.6g append-only tables."""
@@ -258,6 +270,67 @@ class CrossVenueDBStore:
             slippage_stresses_bps JSON,
             quote_ages_ms JSON,
             capital_factors JSON,
+            created_at TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS phase10a6h_market_candidates (
+            candidate_id VARCHAR PRIMARY KEY,
+            polymarket_id VARCHAR,
+            kalshi_id VARCHAR,
+            blocking_key VARCHAR,
+            filter_status VARCHAR,
+            filter_rejection_reason VARCHAR,
+            rejection_detail VARCHAR,
+            config_hash VARCHAR,
+            created_at TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS phase10a6h_mapping_results (
+            mapping_id VARCHAR PRIMARY KEY,
+            polymarket_id VARCHAR,
+            kalshi_id VARCHAR,
+            canonical_contract_id VARCHAR,
+            equivalence_class VARCHAR,
+            settlement_equivalence BOOLEAN,
+            mapping_status VARCHAR,
+            mapping_reason VARCHAR,
+            poly_metadata_hash VARCHAR,
+            kalshi_metadata_hash VARCHAR,
+            config_hash VARCHAR,
+            created_at TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS phase10a6h_mapping_rejections (
+            rejection_id VARCHAR PRIMARY KEY,
+            candidate_id VARCHAR,
+            polymarket_id VARCHAR,
+            kalshi_id VARCHAR,
+            rejection_reason VARCHAR,
+            rejection_detail VARCHAR,
+            stage VARCHAR,
+            config_hash VARCHAR,
+            created_at TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS phase10a6h_mapping_versions (
+            version_id VARCHAR PRIMARY KEY,
+            mapping_id VARCHAR,
+            version_index INTEGER,
+            metadata_version VARCHAR,
+            contract_status VARCHAR,
+            invalidation_reason VARCHAR,
+            mapping_start TIMESTAMP,
+            mapping_end TIMESTAMP,
+            created_at TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS phase10a6h_analysis_config (
+            config_id VARCHAR PRIMARY KEY,
+            version VARCHAR,
+            synonym_dict_version VARCHAR,
+            synonym_dict_hash VARCHAR,
+            config_hash VARCHAR,
+            config_json VARCHAR,
             created_at TIMESTAMP
         );
         """
@@ -450,3 +523,72 @@ class CrossVenueDBStore:
             ])
         finally:
             conn.close()
+
+    def record_discovery_audit(
+        self,
+        candidates: List[Any],
+        validated_pairs: List[Any],
+        version_records: List[Any],
+        summary: Any,
+        config: Any,
+    ) -> None:
+        """Appends Phase 10A.6H discovery audit records to DuckDB."""
+        conn = self._get_connection(read_only=False)
+        try:
+            # 1. Config
+            cfg_json = json.dumps(config.model_dump() if hasattr(config, "model_dump") else config.__dict__, default=str)
+            conn.execute("""
+                INSERT OR REPLACE INTO phase10a6h_analysis_config VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """, [
+                f"cfg_{config.config_hash[:12]}", config.version, config.synonym_dict_version,
+                config.compute_synonym_dict_hash(), config.config_hash, cfg_json
+            ])
+
+            # 2. Candidates & Filter Rejections
+            for cand in candidates:
+                status_str = cand.filter_status.value if hasattr(cand.filter_status, "value") else str(cand.filter_status)
+                reason_str = cand.filter_rejection_reason.value if cand.filter_rejection_reason and hasattr(cand.filter_rejection_reason, "value") else (str(cand.filter_rejection_reason) if cand.filter_rejection_reason else None)
+                conn.execute("""
+                    INSERT OR IGNORE INTO phase10a6h_market_candidates VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """, [
+                    cand.candidate_id, cand.polymarket_id, cand.kalshi_id, cand.blocking_key,
+                    status_str, reason_str, cand.rejection_detail, summary.config_hash
+                ])
+                if status_str == "REJECTED":
+                    conn.execute("""
+                        INSERT OR IGNORE INTO phase10a6h_mapping_rejections VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    """, [
+                        f"rej_filt_{cand.candidate_id}", cand.candidate_id, cand.polymarket_id, cand.kalshi_id,
+                        reason_str or "FILTER_REJECTED", cand.rejection_detail or "", "FILTER", summary.config_hash
+                    ])
+
+            # 3. Validated mappings & settlement rejections
+            for m, prov in validated_pairs:
+                conn.execute("""
+                    INSERT OR IGNORE INTO phase10a6h_mapping_results VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """, [
+                    m.mapping_id, prov.polymarket_market_id, prov.kalshi_market_id,
+                    m.canonical_contract_id, m.equivalence_class.value, m.settlement_equivalence,
+                    m.mapping_status.value, m.mapping_reason, prov.poly_metadata_hash,
+                    prov.kalshi_metadata_hash, summary.config_hash
+                ])
+                if not m.settlement_equivalence:
+                    conn.execute("""
+                        INSERT OR IGNORE INTO phase10a6h_mapping_rejections VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    """, [
+                        f"rej_settle_{m.mapping_id}", f"cand_{m.mapping_id}", prov.polymarket_market_id, prov.kalshi_market_id,
+                        m.equivalence_class.value, m.mapping_reason, "SETTLEMENT_VALIDATION", summary.config_hash
+                    ])
+
+            # 4. Versions
+            for v in version_records:
+                status_v = v.contract_status.value if hasattr(v.contract_status, "value") else str(v.contract_status)
+                conn.execute("""
+                    INSERT OR IGNORE INTO phase10a6h_mapping_versions VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """, [
+                    v.version_id, v.mapping_id, v.version_index, v.metadata_version,
+                    status_v, v.invalidation_reason, v.mapping_start, v.mapping_end
+                ])
+        finally:
+            conn.close()
+

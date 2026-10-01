@@ -97,6 +97,22 @@ class CanonicalEconomicContract(BaseModel):
         raw_json = json.dumps(payload, sort_keys=True)
         return hashlib.sha256(raw_json.encode("utf-8")).hexdigest()
 
+    def compute_economic_terms_hash(self) -> str:
+        """Deterministic SHA-256 hash of economic payoff terms (independent of contract/market ID)."""
+        payload = {
+            "venue": self.venue.lower(),
+            "underlying_event": self.underlying_event.strip().lower(),
+            "observation_variable": self.observation_variable.strip().lower(),
+            "geographic_scope": self.geographic_scope.strip().upper(),
+            "temporal_scope": self.temporal_scope.strip().lower(),
+            "threshold": self.threshold,
+            "inequality_direction": self.inequality_direction,
+            "units": self.units.strip().upper(),
+            "source_of_resolution": self.source_of_resolution.strip().lower(),
+        }
+        raw_json = json.dumps(payload, sort_keys=True)
+        return hashlib.sha256(raw_json.encode("utf-8")).hexdigest()
+
 
 class ContractMappingResult(BaseModel):
     """Machine-readable contract mapping outcome (Phase 10A.6e Section 4)."""
