@@ -188,44 +188,45 @@ class DeterministicStatArbEngine:
     # =========================================================================
     # 4. ORNSTEIN-UHLENBECK MEAN-REVERSION HALF-LIFE
     # =========================================================================
+    # 4. ORNSTEIN-UHLENBECK MEAN-REVERSION HALF-LIFE (AUDITED & HARDENED)
+    # =========================================================================
 
     def estimate_half_life(self, spread: pd.Series, dt: float = 1.0) -> Tuple[float, float, float]:
         """Estimates mean-reversion half-life via AR(1) Ornstein-Uhlenbeck regression:
         
-        Delta s_t = alpha + theta * s_{t-1} + epsilon_t
-        lambda = -ln(1 + theta) / dt (or lambda = -theta / dt for small theta)
-        half_life = ln(2) / lambda
+        Δs_t = α + θ s_{t-1} + ε_t
+        AR(1): φ = 1 + θ
+        Continuous rate: λ = -ln(φ) / dt = -ln(1 + θ) / dt (for 0 < φ < 1)
+        Half-life: t_{1/2} = ln(2) / λ
         
+        Guarantees: Never returns a false positive half-life if φ <= 0 or φ >= 1.
         Returns: (half_life_steps, theta, p_value)
         """
-        s = spread.dropna().values
-        if len(s) < self.config.min_observations:
+        from src.statarb.ou_validator import OUModelValidator, OUProcessStatus
+        validator = OUModelValidator(min_observations=self.config.min_observations)
+        res = validator.validate_and_estimate_ou(spread, dt=dt, check_bounded=False)
+
+        if res.status == OUProcessStatus.VALID_MEAN_REVERSION:
+            return res.half_life_steps, res.theta, res.regression_pvalue
+        elif res.status in (OUProcessStatus.NO_MEAN_REVERSION, OUProcessStatus.EXPLOSIVE, OUProcessStatus.ZERO_VARIANCE):
+            return float("inf"), res.theta, res.regression_pvalue
+        elif res.status == OUProcessStatus.ZERO_MEMORY_WHITE_NOISE:
+            return 0.0, res.theta, res.regression_pvalue
+        elif res.status == OUProcessStatus.INVALID_PARAMETER:
+            return float("nan"), res.theta, res.regression_pvalue
+        else: # INSUFFICIENT_DATA
             return float("inf"), 0.0, 1.0
 
-        s_prev = s[:-1]
-        delta_s = s[1:] - s_prev
-
-        # Linear regression: delta_s ~ s_prev
-        slope, intercept, r_value, p_value, std_err = stats.linregress(s_prev, delta_s)
-        theta = float(slope)
-
-        # If theta >= 0, the process does not mean-revert (unit-root or explosive)
-        if theta >= 0.0:
-            return float("inf"), theta, float(p_value)
-
-        # Continuous mean reversion rate lambda
-        # 1 + theta = phi = exp(-lambda * dt) => lambda = -ln(1 + theta) / dt
-        phi = 1.0 + theta
-        if phi > 0:
-            rate_lambda = -np.log(phi) / dt
-        else:
-            rate_lambda = -theta / dt
-
-        if rate_lambda <= 1e-12:
-            return float("inf"), theta, float(p_value)
-
-        half_life = np.log(2.0) / rate_lambda
-        return float(half_life), theta, float(p_value)
+    def audit_ou_dynamics(
+        self,
+        series: pd.Series,
+        dt: float = 1.0,
+        check_bounded: bool = True
+    ):
+        """Conducts full audited continuous-time OU validation with bounded price diagnostics."""
+        from src.statarb.ou_validator import OUModelValidator
+        validator = OUModelValidator(min_observations=self.config.min_observations)
+        return validator.validate_and_estimate_ou(series, dt=dt, check_bounded=check_bounded)
 
     # =========================================================================
     # 5. STATIONARITY & COINTEGRATION
