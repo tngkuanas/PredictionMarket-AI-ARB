@@ -82,6 +82,12 @@ from src.cross_venue.cross_venue_observation_harness import (
     ObservationHarnessConfig,
     CrossVenueObservationHarness,
 )
+from src.cross_venue.provenance_auditor import (
+    SourceClassification,
+    AuditVerdict,
+    ObservationProvenanceRecord,
+    AdversarialProvenanceAuditor,
+)
 
 __all__ = [
     "EquivalenceClass",
@@ -154,5 +160,9 @@ __all__ = [
     "LeadLagObservationRecord",
     "ObservationHarnessConfig",
     "CrossVenueObservationHarness",
+    "SourceClassification",
+    "AuditVerdict",
+    "ObservationProvenanceRecord",
+    "AdversarialProvenanceAuditor",
 ]
 
