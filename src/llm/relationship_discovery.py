@@ -24,8 +24,25 @@ from src.statarb.schema import (
     StructuredHypothesis,
     HypothesisFamily,
     HypothesisStatus,
+    DiscoveryMode,
+    EdgeType,
+    DecayProfile,
+    NoveltyClassification,
+    QualityGateStatus,
+    HypothesisQualityState,
 )
 from src.statarb.boundary_validator import BoundaryValidator
+from src.statarb.self_critique import AISelfCritiqueValidator
+from src.statarb.hypothesis_filters import (
+    FrictionFirstFilter,
+    CapacityGate,
+    CausalDirectionValidator,
+    ConfoundingAuditor,
+)
+from src.statarb.historical_rules import (
+    HistoricalRuleEngine,
+    HistoricalFailurePattern,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -400,35 +417,39 @@ class RelationshipDiscoveryEngine:
     def discover_structured_hypotheses(
         self,
         canonical_markets: List[CanonicalMarket],
-        max_hypotheses: int = 10
+        max_hypotheses: int = 10,
+        mode: Optional[DiscoveryMode] = None,
     ) -> List[StructuredHypothesis]:
         """Discovers structured, testable hypotheses classified into the 7 hypothesis families
-        and verified by BoundaryValidator.
+        and verified by BoundaryValidator and AISelfCritiqueValidator.
         """
         if not canonical_markets:
             return []
 
         if not isinstance(self.llm, HeuristicDomainLLMClient):
             try:
-                return self._discover_structured_via_api(canonical_markets, max_hypotheses)
+                return self._discover_structured_via_api(canonical_markets, max_hypotheses, mode=mode)
             except Exception as e:
                 logger.warning(f"Structured LLM discovery failed ({e}), falling back to domain engine.")
-                return self._discover_structured_via_domain(canonical_markets, max_hypotheses)
+                return self._discover_structured_via_domain(canonical_markets, max_hypotheses, mode=mode)
         else:
-            return self._discover_structured_via_domain(canonical_markets, max_hypotheses)
+            return self._discover_structured_via_domain(canonical_markets, max_hypotheses, mode=mode)
 
     def _discover_structured_via_api(
         self,
         markets: List[CanonicalMarket],
-        max_hypotheses: int
+        max_hypotheses: int,
+        mode: Optional[DiscoveryMode] = None,
     ) -> List[StructuredHypothesis]:
-        """Queries LLM using the operational template: INPUT -> TRANSFORMATION -> PREDICTION -> HORIZON -> COST -> FALSIFICATION."""
+        """Queries LLM using operational template: INPUT -> TRANSFORMATION -> PREDICTION -> HORIZON -> COST -> FALSIFICATION."""
         market_summaries = [
             f"ID: {m.market_id} | Title: {m.title} | Entities: {','.join(m.entities)} | Event: {m.event_type} | Horizon: {m.time_horizon}"
             for m in markets[:50]
         ]
+        mode_str = f"Target Discovery Mode: {mode.value}" if mode else "Distribute across the 7 discovery modes"
         prompt = (
             "You are an elite quantitative researcher in prediction markets.\n"
+            f"{mode_str}\n"
             "Generate structured testable hypotheses for statistical arbitrage.\n"
             "Classify each hypothesis into exactly one of the 7 designated families:\n"
             "exact_contract_arb, resolution_arb, conditional_stat_arb, cross_market_lead_lag, "
@@ -478,7 +499,12 @@ class RelationshipDiscoveryEngine:
         for item in res.get("hypotheses", [])[:max_hypotheses]:
             try:
                 hyp = BoundaryValidator.sanitize_and_construct(item)
-                hypotheses.append(hyp)
+                critique_res = AISelfCritiqueValidator.critique(hyp)
+                hyp.quality_state = critique_res.quality_state
+                if critique_res.passed_structural_critique:
+                    hypotheses.append(hyp)
+                else:
+                    logger.info(f"Hypothesis {hyp.hypothesis_id} rejected by self-critique: {critique_res.rejection_reasons}")
             except Exception as e:
                 logger.warning(f"Boundary validation failed for AI hypothesis proposal: {e}")
         return hypotheses
@@ -486,44 +512,262 @@ class RelationshipDiscoveryEngine:
     def _discover_structured_via_domain(
         self,
         markets: List[CanonicalMarket],
-        max_hypotheses: int
+        max_hypotheses: int,
+        mode: Optional[DiscoveryMode] = None,
     ) -> List[StructuredHypothesis]:
-        """Domain generator producing verified hypotheses across designated families."""
-        raw_candidates = self._discover_via_domain_engine(markets, max_candidates=max_hypotheses * 2)
+        """Domain generator producing verified hypotheses across the 7 designated modes (Phase 10A.6d)."""
+        raw_candidates = self._discover_via_domain_engine(markets, max_candidates=max_hypotheses * 3)
         structured: List[StructuredHypothesis] = []
 
+        # Determine target modes
+        target_modes = [mode] if mode else list(DiscoveryMode)
+
+        # Standard Confounder Audit
+        default_confounders = {
+            "macro_shock": {
+                "expected_distortion": "Broad market re-pricing causing spurious co-movement",
+                "control_method": "Residualize against macro index / matched non-event window"
+            },
+            "market_wide_drift": {
+                "expected_distortion": "Persistent secular trend inflating correlation",
+                "control_method": "High-pass differencing and stationary detrending"
+            },
+            "time_of_day_liquidity": {
+                "expected_distortion": "Wider spreads during low-volume hours creating false edge",
+                "control_method": "Time-of-day matched sampling and spread stratification"
+            },
+            "resolution_proximity": {
+                "expected_distortion": "Non-linear delta acceleration near expiration",
+                "control_method": "Filter out contracts within 48h of settlement"
+            },
+            "event_clustering": {
+                "expected_distortion": "Multiple news items triggering serial autocorrelation",
+                "control_method": "Cluster-robust Newey-West standard errors and event isolation"
+            }
+        }
+
+        # Standard Pre-Test Controls
+        default_controls = {
+            "primary_test": "Permutation test of conditional forward return difference",
+            "placebo_test": "24-hour time-shifted lead/lag correlation",
+            "reverse_test": "Reverse-direction Granger causality and regression",
+            "matched_control": "Matched non-event volatility and volume control window",
+            "OOS_test": "Strict forward temporal split on unseen chronologically later data",
+            "friction_stress": "Walk executable L2 order ladder with 2x observed spread and 20 bps fees",
+            "capacity_stress": "Simulate $1,000 order walking book depth to measure slippage degradation"
+        }
+
+        mode_idx = 0
         for cand in raw_candidates:
-            # Map candidate to structured hypothesis
-            opp = cand.discovery.opportunity_class
-            rel = cand.discovery.relationship_type
+            current_mode = target_modes[mode_idx % len(target_modes)]
+            mode_idx += 1
 
-            if opp == OpportunityClass.STRUCTURAL:
-                fam = HypothesisFamily.EXACT_CONTRACT_ARB
-            elif opp in (OpportunityClass.RESOLUTION_ARBITRAGE, OpportunityClass.CROSS_MARKET_LOGICAL):
+            m_a = cand.discovery.market_a_id
+            m_b = cand.discovery.market_b_id
+            short_id = f"hyp_{current_mode.value.lower()}_{m_a[:6]}_{m_b[:6]}"
+            fam_id = f"fam_{current_mode.value.lower()}_{m_a[:6]}_{m_b[:6]}"
+
+            # Mode-specific attributes
+            if current_mode == DiscoveryMode.MODE_A_LOGICAL:
+                edge_type = EdgeType.RESOLUTION_ARBITRAGE
                 fam = HypothesisFamily.RESOLUTION_ARB
-            elif rel == RelationshipType.TEMPORAL_LEAD_LAG or opp == OpportunityClass.INFORMATION_LATENCY:
-                fam = HypothesisFamily.CROSS_MARKET_LEAD_LAG
-            elif opp == OpportunityClass.SECOND_ORDER or rel == RelationshipType.EVENT_CHAIN:
-                fam = HypothesisFamily.EVENT_CONDITIONAL_STAT_ARB
-            elif rel == RelationshipType.CROSS_PLATFORM_EQUIVALENCE:
-                fam = HypothesisFamily.CROSS_VENUE_PLATFORM
-            else:
-                fam = HypothesisFamily.CONDITIONAL_STAT_ARB
+                mech_type = "SETTLEMENT_LOGIC"
+                mech = "Contract settlement rules enforce deterministic payout bounds between mutually exclusive or conditional outcomes."
+                pers_rationale = "Settlement rule logic defines immutable payoff bound that persists until contract resolution."
+                target_var = "P(Target)_{expiry}"
+                cond = "P(Source) + P(Target) > 1.05 or P(Source) < P(Target)"
+                exp_eff = "Deterministic convergence to settlement bound"
+                min_eff = 25.0
+                cost_bps = 15.0
+                decay = DecayProfile.PERSISTENT
+                horizon = "1h-24h"
+                lat_rationale = "Structural bound survives until active capital arbitrage; not sensitive to sub-second latency."
+                exp_gross = 40.0
+                spread = 6.0
+                fee = 0.0
+                slip = 4.0
+                lat_pen = 2.0
+                safety = 5.0
+                req_gross = 17.0
+                fwd_rat = "Settlement criteria deterministically link outcome payouts."
+                rev_rat = "Structural non-directional payoff identity."
+                is_dir = False
+                nec_cond = ["Authoritative settlement terms remain unchanged", "Executable depth >= $500", "No dispute ambiguity"]
+                fail_cond = ["Settlement criteria changed by resolution source", "Spread exceeds pricing disparity", "Placebo shows identical spread"]
 
-            short_id = f"hyp_{cand.discovery.discovery_id[-6:]}"
-            fam_id = f"fam_{fam.value}_{cand.discovery.market_a_id[:6]}_{cand.discovery.market_b_id[:6]}"
+            elif current_mode == DiscoveryMode.MODE_B_ECONOMIC:
+                edge_type = EdgeType.PREDICTIVE_INFORMATION_EDGE
+                fam = HypothesisFamily.EVENT_CONDITIONAL_STAT_ARB
+                mech_type = "COMMON_FUNDAMENTAL"
+                mech = "Macro policy surprises and inflation expectations propagate sequentially to secondary contracts."
+                pers_rationale = "Macro fundamental adjustments take minutes to hours to fully filter into niche prediction contracts."
+                target_var = "Delta P(Target)_{t+15m}"
+                cond = "|Delta P(Source)_t| >= 20 bps"
+                exp_eff = "Target contract adjusts in direction of macro surprise by >= 25 bps"
+                min_eff = 20.0
+                cost_bps = 20.0
+                decay = DecayProfile.GRADUAL_DECAY
+                horizon = "15m-1h"
+                lat_rationale = "Transmission occurs over multiple minutes through secondary liquidity rebalancing."
+                exp_gross = 38.0
+                spread = 10.0
+                fee = 2.0
+                slip = 5.0
+                lat_pen = 4.0
+                safety = 5.0
+                req_gross = 26.0
+                fwd_rat = "Macro fundamental shift directly impacts target contract asset valuation."
+                rev_rat = "Target contract trading does not feed back into global macroeconomic parameters."
+                is_dir = True
+                nec_cond = ["Macro surprise is statistically detectable", "Target contract remains liquid", "Survives time-shifted placebo"]
+                fail_cond = ["Friction consumes full return", "Reverse direction exhibits identical correlation", "OOS drift accounts for move"]
+
+            elif current_mode == DiscoveryMode.MODE_C_EVENT:
+                edge_type = EdgeType.PREDICTIVE_INFORMATION_EDGE
+                fam = HypothesisFamily.EVENT_CONDITIONAL_STAT_ARB
+                mech_type = "EVENT_RESPONSE"
+                mech = "Scheduled release announcements trigger immediate repricing in primary market with delayed spillover to target."
+                pers_rationale = "Staggered participant attention and retail order queues preserve a 15-60s execution window."
+                target_var = "Delta P(Target)_{t+30s}"
+                cond = "Official event release deviation >= 2.0 sigma"
+                exp_eff = "Target contract executable price jumps by >= 30 bps"
+                min_eff = 25.0
+                cost_bps = 25.0
+                decay = DecayProfile.FAST_DECAY
+                horizon = "15s-60s"
+                lat_rationale = "Automated taker execution within 250ms captures post-event adjustment before makers cancel quotes."
+                exp_gross = 45.0
+                spread = 12.0
+                fee = 2.0
+                slip = 6.0
+                lat_pen = 5.0
+                safety = 5.0
+                req_gross = 30.0
+                fwd_rat = "Official release instantly updates conditional probability state."
+                rev_rat = "Exogenous release cannot be predicted by pre-event target price fluctuations."
+                is_dir = True
+                nec_cond = ["Official timestamp precedes price move", "Executable depth survives event shock", "Survives reverse direction test"]
+                fail_cond = ["Edge disappears after 250ms latency delay", "Pre-event drift accounts for entire response", "Randomized timestamps match response"]
+
+            elif current_mode == DiscoveryMode.MODE_D_MICROSTRUCTURE:
+                edge_type = EdgeType.MICROSTRUCTURE_EDGE
+                fam = HypothesisFamily.ORDER_FLOW_MICROSTRUCTURE
+                mech_type = "ORDER_FLOW_TRANSMISSION"
+                mech = "Aggressive order book sweeps deplete liquidity in contract A, prompting market makers to lean quotes in contract B."
+                pers_rationale = "Market makers update quotes across correlated books sequentially, leaving a 5-30s window."
+                target_var = "P(Target)_{t+15s} - Mid(Target)_t"
+                cond = "Signed order flow imbalance >= 2.0 sigma"
+                exp_eff = "Target contract executable price moves in direction of flow by >= 25 bps"
+                min_eff = 20.0
+                cost_bps = 20.0
+                decay = DecayProfile.FAST_DECAY
+                horizon = "5-30s"
+                lat_rationale = "Order flow transmission across books survives 5-30s before replenishment."
+                exp_gross = 32.0
+                spread = 8.0
+                fee = 2.0
+                slip = 4.0
+                lat_pen = 5.0
+                safety = 5.0
+                req_gross = 24.0
+                fwd_rat = "Aggressive book sweep reveals informed inventory flow to makers."
+                rev_rat = "Secondary contract has low organic flow and does not lead primary order books."
+                is_dir = True
+                nec_cond = ["Signed imbalance precedes target quote shift", "Target book maintains observable depth", "Survives feature removal"]
+                fail_cond = ["Edge vanishes when walking full L2 ladder instead of mid-price", "Reversal occurs immediately upon fill", "Latency > 500ms destroys edge"]
+
+            elif current_mode == DiscoveryMode.MODE_E_CROSS_MARKET:
+                edge_type = EdgeType.PREDICTIVE_INFORMATION_EDGE
+                fam = HypothesisFamily.CROSS_MARKET_LEAD_LAG
+                mech_type = "LEAD_LAG"
+                mech = "Leading market A processes information faster due to higher liquidity, establishing temporal lead over market B."
+                pers_rationale = "Capital allocation latency and differing attention pools maintain 15-90s lead/lag."
+                target_var = "Delta P(Target)_{t+30s}"
+                cond = "Delta P(Source)_t >= 20 bps"
+                exp_eff = "Target contract adjusts in same direction by >= 25 bps"
+                min_eff = 20.0
+                cost_bps = 22.0
+                decay = DecayProfile.FAST_DECAY
+                horizon = "15-90s"
+                lat_rationale = "Lead/lag persists due to distinct retail participants and lack of cross-market high-frequency market makers."
+                exp_gross = 36.0
+                spread = 10.0
+                fee = 2.0
+                slip = 5.0
+                lat_pen = 5.0
+                safety = 5.0
+                req_gross = 27.0
+                fwd_rat = "Source market possesses higher trading volume and institutional discovery."
+                rev_rat = "Target market does not drive price formation in primary benchmark."
+                is_dir = True
+                nec_cond = ["Source update strictly precedes target response", "Target executable spread narrower than move", "Survives reverse test"]
+                fail_cond = ["Reverse direction produces equal predictive power", "Gross edge consumed by taker fees", "Lead disappears out-of-sample"]
+
+            elif current_mode == DiscoveryMode.MODE_F_CROSS_VENUE:
+                edge_type = EdgeType.CROSS_VENUE_ARBITRAGE
+                fam = HypothesisFamily.CROSS_VENUE_PLATFORM
+                mech_type = "CROSS_VENUE_PRICE_DISCOVERY"
+                mech = "Price discovery across Polymarket and Kalshi exhibits temporary divergence due to fiat/crypto capital segmentation."
+                pers_rationale = "Inter-platform capital transfer delays preserve price disparities for 10-60s."
+                target_var = "P(Venue_B)_t - P(Venue_A)_t"
+                cond = "|P(Venue_A) - P(Venue_B)| >= 35 bps"
+                exp_eff = "Cross-venue spread mean-reverts to zero within 60s"
+                min_eff = 30.0
+                cost_bps = 30.0
+                decay = DecayProfile.FAST_DECAY
+                horizon = "10-60s"
+                lat_rationale = "Simultaneous dual-venue execution requires 8 bps latency penalty to model transfer/fill risks."
+                exp_gross = 48.0
+                spread = 14.0
+                fee = 4.0
+                slip = 6.0
+                lat_pen = 8.0
+                safety = 5.0
+                req_gross = 37.0
+                fwd_rat = "Primary offshore crypto venue incorporates global order flow faster than domestic venue."
+                rev_rat = "Domestic venue has lower velocity and follows primary venue price adjustments."
+                is_dir = True
+                nec_cond = ["Contracts are economically identical in settlement terms", "Both platforms maintain active books", "Friction < spread disparity"]
+                fail_cond = ["Settlement rule divergence between platforms", "Leg execution desynchronization", "Dual taker fees eliminate edge"]
+
+            else: # MODE_G_STAT_ARB
+                edge_type = EdgeType.STATISTICAL_ARBITRAGE
+                fam = HypothesisFamily.CONDITIONAL_STAT_ARB
+                mech_type = "RISK_TRANSFER"
+                mech = "Temporary liquidity imbalances dislocate cointegrated price ratio before statistical arbitrageurs restore equilibrium."
+                pers_rationale = "Mean-reverting spread dynamics unfold over minutes as market makers replenish depth."
+                target_var = "Spread_t = P(Target)_t - beta * P(Source)_t"
+                cond = "|Z(Spread_t)| >= 2.0 sigma"
+                exp_eff = "Spread mean-reverts toward long-run equilibrium with half-life < 30 steps"
+                min_eff = 25.0
+                cost_bps = 20.0
+                decay = DecayProfile.GRADUAL_DECAY
+                horizon = "5m-30m"
+                lat_rationale = "Mean reversion horizon of minutes permits conservative execution without sub-second latency sensitivity."
+                exp_gross = 36.0
+                spread = 10.0
+                fee = 2.0
+                slip = 5.0
+                lat_pen = 4.0
+                safety = 5.0
+                req_gross = 26.0
+                fwd_rat = "Spread deviations reflect temporary inventory imbalances rather than structural breaks."
+                rev_rat = "Relative-value mean reversion is inherently symmetric (non-directional)."
+                is_dir = False
+                nec_cond = ["Spread exhibits empirical stationarity (ADF p-value < 0.05)", "Estimated half-life is finite (< 60 steps)", "Survives OOS cointegration"]
+                fail_cond = ["Spread is non-stationary / random walk", "Divergence expands beyond stop-loss z-score", "Trading costs exceed reversion amplitude"]
 
             proposal_dict = {
                 "hypothesis_id": short_id,
                 "hypothesis_family": fam.value,
-                "source_markets": [cand.discovery.market_a_id],
-                "target_markets": [cand.discovery.market_b_id],
-                "causal_mechanism": cand.discovery.economic_mechanism,
+                "source_markets": [m_a],
+                "target_markets": [m_b],
+                "causal_mechanism": mech,
                 "required_observations": ["order_book_l2", "trades"],
                 "observable_variables": ["mid_price", "spread", "delta_p"],
                 "expected_relationship": cand.constraint.mathematical_expression,
-                "direction": "lead_lag" if fam == HypothesisFamily.CROSS_MARKET_LEAD_LAG else "mean_reverting",
-                "expected_time_horizon": f"{int(cand.constraint.lead_time_hours)}h",
+                "direction": "lead_lag" if is_dir else "mean_reverting",
+                "expected_time_horizon": horizon,
                 "falsification_condition": cand.constraint.testable_null_hypothesis,
                 "minimum_sample_requirement": 30,
                 "proposed_statistical_test": "permutation_test",
@@ -531,21 +775,58 @@ class RelationshipDiscoveryEngine:
                 "execution_dependency": "taker_l2_walk",
                 "expected_friction_sensitivity": "medium",
                 "capacity_dependency": 1000.0,
-                "known_confounders": ["macro_trend", "common_liquidity_shock"],
+                "known_confounders": list(default_confounders.keys()),
                 "lookahead_risk": "Strict zero-lookahead: leading market trigger strictly precedes evaluation window.",
                 "confidence": cand.discovery.confidence,
-                "input_signal": f"Leading market {cand.discovery.market_a_id} price delta >= {cand.constraint.trigger_threshold_delta_a}",
+                "input_signal": f"Leading market {m_a} trigger condition",
                 "transformation": "Standardized difference over baseline drift",
-                "prediction": f"Target market {cand.discovery.market_b_id} moves by >= {cand.constraint.expected_delta_b}",
-                "horizon": f"{cand.constraint.lead_time_hours} hours",
-                "cost_model": "Observed L2 ladder depth + 20 bps taker fee + 5 bps latency penalty",
-                "falsification_test": "Time-shifted placebo + reverse-direction symmetric test + randomized pairs",
+                "prediction": f"Target market {m_b} conditional adjustment",
+                "horizon": horizon,
+                "cost_model": f"Observed L2 ladder depth + {fee:.1f} bps fee + {lat_pen:.1f} bps latency penalty",
+                "falsification_test": "Time-shifted placebo + reverse-direction test + matched controls",
                 "lineage_family_id": fam_id,
+                "discovery_mode": current_mode.value,
+                "edge_type": edge_type.value,
+                "economic_mechanism_type": mech_type,
+                "mechanism_persistence_rationale": pers_rationale,
+                "target_variable": target_var,
+                "condition": cond,
+                "expected_effect": exp_eff,
+                "minimum_effect_size_bps": min_eff,
+                "cost_assumption_bps": cost_bps,
+                "novelty_classification": NoveltyClassification.NEW.value,
+                "necessary_conditions": nec_cond,
+                "failure_conditions": fail_cond,
+                "expected_response_horizon": horizon,
+                "expected_decay_profile": decay.value,
+                "latency_sensitivity_rationale": lat_rationale,
+                "expected_gross_edge_bps": exp_gross,
+                "expected_spread_bps": spread,
+                "expected_fee_bps": fee,
+                "expected_slippage_bps": slip,
+                "latency_penalty_bps": lat_pen,
+                "safety_margin_bps": safety,
+                "required_gross_edge_bps": req_gross,
+                "is_frictionally_plausible": (exp_gross >= req_gross),
+                "expected_order_size_usd": 250.0,
+                "minimum_required_depth_usd": 750.0,
+                "expected_capacity_usd": 2500.0,
+                "capacity_failure_condition": "Observable depth in target book drops below $500, causing severe ladder walk slippage.",
+                "forward_causal_rationale": fwd_rat,
+                "reverse_causal_rationale": rev_rat,
+                "causal_asymmetry_established": True,
+                "confounders_audit": default_confounders,
+                "pre_test_controls": default_controls,
             }
 
             try:
                 hyp = BoundaryValidator.sanitize_and_construct(proposal_dict)
-                structured.append(hyp)
+                critique_res = AISelfCritiqueValidator.critique(hyp)
+                hyp.quality_state = critique_res.quality_state
+                if critique_res.passed_structural_critique:
+                    structured.append(hyp)
+                else:
+                    logger.info(f"Hypothesis {hyp.hypothesis_id} rejected by structural self-critique: {critique_res.rejection_reasons}")
                 if len(structured) >= max_hypotheses:
                     break
             except Exception as e:

@@ -18,6 +18,7 @@ PROHIBITED AI ACTIONS (STRICTLY REJECTED):
 - Overriding execution friction, spread, or depth checks
 - Modifying or tampering with empirical statistical results
 - Declaring profitability or claiming guaranteed alpha
+- Selecting a winning strategy or tuning against OOS results
 - Bypassing failed validation gates
 """
 
@@ -29,6 +30,10 @@ from src.statarb.schema import (
     StructuredHypothesis,
     HypothesisFamily,
     HypothesisStatus,
+)
+from src.statarb.historical_rules import (
+    HistoricalRuleEngine,
+    HistoricalFailurePattern,
 )
 
 logger = logging.getLogger(__name__)
@@ -50,6 +55,11 @@ class BoundaryValidator:
         r"\bcertain\s+gain\b",
         r"\b100%\s+win\b",
         r"\balpha\s+discovered\b",
+        r"\bguaranteed\s+edge\b",
+        r"\bwinning\s+strategy\b",
+        r"\bdeclare\s+profitability\b",
+        r"\btune\s+against\s+oos\b",
+        r"\brank\s+winning\b",
     ]
 
     PROHIBITED_ORDER_KEYS = [
@@ -62,6 +72,14 @@ class BoundaryValidator:
         "bypass_validation",
         "override_spread",
         "override_fees",
+        "execute_order",
+        "order_quantity",
+        "target_position",
+        "modify_statistical_result",
+        "override_pvalue",
+        "tune_oos",
+        "override_depth",
+        "select_winning_strategy",
     ]
 
     @classmethod
@@ -112,6 +130,13 @@ class BoundaryValidator:
         if not falsification or len(str(falsification).strip()) < 10:
             msg = "Missing Falsification Condition: AI proposal must specify quantitative falsification criteria."
             return False, msg
+
+        # 6. Check economic mechanism against vague claims
+        causal_mech = proposal.get("causal_mechanism", "").lower()
+        for pat in HistoricalRuleEngine.PROHIBITED_MECHANISM_PHRASES:
+            if re.search(pat, causal_mech):
+                msg = f"Vague Mechanism Rejected: Mechanism contains prohibited phrase matching '{pat}'."
+                return False, msg
 
         return True, None
 

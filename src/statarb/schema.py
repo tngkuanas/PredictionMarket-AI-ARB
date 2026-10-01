@@ -25,6 +25,71 @@ class HypothesisFamily(str, Enum):
     CROSS_VENUE_PLATFORM = "cross_venue_platform"        # Equivalent economic contracts across Polymarket/Kalshi
 
 
+class DiscoveryMode(str, Enum):
+    """The 7 distinct AI hypothesis generation modes (Phase 10A.6d)."""
+    MODE_A_LOGICAL = "MODE_A_LOGICAL"                    # Logical / Resolution
+    MODE_B_ECONOMIC = "MODE_B_ECONOMIC"                  # Economic / Macro transmission
+    MODE_C_EVENT = "MODE_C_EVENT"                        # Event / Information dissemination
+    MODE_D_MICROSTRUCTURE = "MODE_D_MICROSTRUCTURE"      # Microstructure / Order flow
+    MODE_E_CROSS_MARKET = "MODE_E_CROSS_MARKET"          # Cross-Market Lead/Lag
+    MODE_F_CROSS_VENUE = "MODE_F_CROSS_VENUE"            # Cross-Venue Platform Equivalence
+    MODE_G_STAT_ARB = "MODE_G_STAT_ARB"                  # Statistical Arbitrage / Relative Value
+
+
+class EdgeType(str, Enum):
+    """Strict predictive vs arbitrage classification (Phase 10A.6d)."""
+    EXACT_ARBITRAGE = "EXACT_ARBITRAGE"                  # Structurally guaranteed mathematical bound
+    RESOLUTION_ARBITRAGE = "RESOLUTION_ARBITRAGE"        # Logical payout bounds from settlement definitions
+    STATISTICAL_ARBITRAGE = "STATISTICAL_ARBITRAGE"      # Mean-reverting statistical spread / cointegration
+    PREDICTIVE_INFORMATION_EDGE = "PREDICTIVE_INFORMATION_EDGE" # Information/macro event leads lagging contract
+    MICROSTRUCTURE_EDGE = "MICROSTRUCTURE_EDGE"          # Order book imbalance / queue advantage
+    CROSS_VENUE_ARBITRAGE = "CROSS_VENUE_ARBITRAGE"      # Price differential across venues for identical asset
+
+
+class DecayProfile(str, Enum):
+    """Economic half-life and decay taxonomy (Phase 10A.6d)."""
+    IMMEDIATE = "IMMEDIATE"                              # < 1 second decay
+    FAST_DECAY = "FAST_DECAY"                            # 1 - 30 seconds decay
+    GRADUAL_DECAY = "GRADUAL_DECAY"                      # 1 - 15 minutes decay
+    PERSISTENT = "PERSISTENT"                            # Hours to days persistence
+    UNKNOWN = "UNKNOWN"
+
+
+class NoveltyClassification(str, Enum):
+    """Information-theoretic novelty and lineage status (Phase 10A.6d)."""
+    NEW = "NEW"                                          # Truly novel economic mechanism
+    KNOWN_RELATIONSHIP = "KNOWN_RELATIONSHIP"            # Established/known market dynamic
+    DUPLICATE = "DUPLICATE"                              # Duplicate of existing hypothesis in lineage
+    MUTATION = "MUTATION"                                # Substantive mutation with economic rationale
+    TRIVIAL_TRANSFORMATION = "TRIVIAL_TRANSFORMATION"    # Cosmetic or minor parameter tweak (rejected)
+
+
+class QualityGateStatus(str, Enum):
+    """Categorical states for independent quality validation dimensions (Phase 10A.6d)."""
+    PASS = "PASS"
+    FAIL = "FAIL"
+    INSUFFICIENT_DATA = "INSUFFICIENT_DATA"
+    NOT_TESTED = "NOT_TESTED"
+
+
+class HypothesisQualityState(BaseModel):
+    """10 Independent categorical quality validation axes.
+    
+    CRITICAL RULE: No composite numerical score, no ranking.
+    """
+    mechanism_status: QualityGateStatus = QualityGateStatus.NOT_TESTED
+    formalization_status: QualityGateStatus = QualityGateStatus.NOT_TESTED
+    data_status: QualityGateStatus = QualityGateStatus.NOT_TESTED
+    identification_status: QualityGateStatus = QualityGateStatus.NOT_TESTED
+    execution_status: QualityGateStatus = QualityGateStatus.NOT_TESTED
+    novelty_status: QualityGateStatus = QualityGateStatus.NOT_TESTED
+    friction_status: QualityGateStatus = QualityGateStatus.NOT_TESTED
+    capacity_status: QualityGateStatus = QualityGateStatus.NOT_TESTED
+    falsification_status: QualityGateStatus = QualityGateStatus.NOT_TESTED
+    lineage_status: QualityGateStatus = QualityGateStatus.NOT_TESTED
+    failure_reasons: List[str] = Field(default_factory=list)
+
+
 class HypothesisStatus(str, Enum):
     """Lifecycle stages enforcing the discovery / validation split."""
     DISCOVERY = "DISCOVERY"                              # Newly proposed candidate
@@ -121,6 +186,64 @@ class StructuredHypothesis(BaseModel):
     frozen_timestamp: Optional[str] = Field(default=None, description="ISO timestamp when hypothesis was frozen")
     parameters: Dict[str, Any] = Field(default_factory=dict, description="Frozen model parameters (thresholds, betas, etc.)")
 
+    # 8. Phase 10A.6d Classification & Formalization
+    discovery_mode: DiscoveryMode = Field(default=DiscoveryMode.MODE_E_CROSS_MARKET, description="Designated discovery mode")
+    edge_type: EdgeType = Field(default=EdgeType.STATISTICAL_ARBITRAGE, description="Strict predictive vs arbitrage classification")
+    economic_mechanism_type: str = Field(default="INFORMATION_TRANSMISSION", description="Structural transmission category")
+    mechanism_persistence_rationale: str = Field(default="", description="Why relationship persists long enough to trade")
+    target_variable: str = Field(default="", description="Deterministic target variable, e.g. 'P(B)_{t+horizon}'")
+    condition: str = Field(default="", description="Explicit mathematical activation condition")
+    expected_effect: str = Field(default="", description="Expected directional or quantitative effect")
+    minimum_effect_size_bps: float = Field(default=15.0, description="Minimum detectable effect size in bps")
+    cost_assumption_bps: float = Field(default=25.0, description="Cost assumption in bps (spread + fee + slippage)")
+
+    # 9. Novelty & Lineage
+    novelty_classification: NoveltyClassification = Field(default=NoveltyClassification.NEW, description="Novelty status")
+    mutation_type: Optional[str] = Field(default=None, description="Category of mutation (horizon, threshold, etc.)")
+
+    # 10. Necessary & Failure Conditions
+    necessary_conditions: List[str] = Field(default_factory=list, description="Explicit conditions required for relationship to hold")
+    failure_conditions: List[str] = Field(default_factory=list, description="Explicit conditions under which hypothesis is falsified")
+
+    # 11. Economic Half-Life & Decay
+    expected_response_horizon: str = Field(default="5-30s", description="Response horizon")
+    expected_decay_profile: DecayProfile = Field(default=DecayProfile.FAST_DECAY, description="Decay profile taxonomy")
+    latency_sensitivity_rationale: str = Field(default="", description="Latency survival justification")
+
+    # 12. Friction-First Specifications
+    expected_gross_edge_bps: float = Field(default=30.0, description="Estimated gross edge in bps")
+    expected_spread_bps: float = Field(default=10.0, description="Expected spread in bps")
+    expected_fee_bps: float = Field(default=2.0, description="Expected taker fee in bps")
+    expected_slippage_bps: float = Field(default=5.0, description="Expected slippage in bps")
+    latency_penalty_bps: float = Field(default=5.0, description="Latency penalty in bps")
+    safety_margin_bps: float = Field(default=5.0, description="Safety margin in bps")
+    required_gross_edge_bps: float = Field(default=27.0, description="Theoretical minimum friction threshold")
+    is_frictionally_plausible: bool = Field(default=True, description="True if expected_gross_edge >= required_gross_edge")
+
+    # 13. Capacity-Aware Specifications
+    expected_order_size_usd: float = Field(default=250.0, description="Expected execution order size in USD")
+    minimum_required_depth_usd: float = Field(default=500.0, description="Minimum depth required at top ladders")
+    expected_capacity_usd: float = Field(default=1000.0, description="Maximum capital capacity before degradation")
+    capacity_failure_condition: str = Field(default="", description="Condition where observable depth invalidates strategy")
+
+    # 14. Causal Directionality & Asymmetry
+    forward_causal_rationale: str = Field(default="", description="Why X -> Y occurs")
+    reverse_causal_rationale: str = Field(default="", description="Why Y -> X should not occur symmetrically")
+    causal_asymmetry_established: bool = Field(default=True, description="Whether causal asymmetry is theoretically justified")
+
+    # 15. Confounders & Pre-Test Controls
+    confounders_audit: Dict[str, Dict[str, str]] = Field(
+        default_factory=dict,
+        description="Audit mapping confounder -> {'expected_distortion': str, 'control_method': str}"
+    )
+    pre_test_controls: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Pre-test controls: primary_test, placebo_test, reverse_test, matched_control, OOS_test, friction_stress, capacity_stress"
+    )
+
+    # 16. Categorical Quality State
+    quality_state: Optional[HypothesisQualityState] = Field(default=None, description="10 independent categorical quality states")
+
     @model_validator(mode="after")
     def validate_schema_integrity(self):
         """Validates critical safety constraints and operational fields."""
@@ -157,6 +280,11 @@ class StructuredHypothesis(BaseModel):
             "prediction": self.prediction,
             "horizon": self.horizon,
             "cost_model": self.cost_model,
+            "discovery_mode": self.discovery_mode.value if hasattr(self.discovery_mode, "value") else str(self.discovery_mode),
+            "edge_type": self.edge_type.value if hasattr(self.edge_type, "value") else str(self.edge_type),
+            "minimum_effect_size_bps": self.minimum_effect_size_bps,
+            "cost_assumption_bps": self.cost_assumption_bps,
+            "pre_test_controls": self.pre_test_controls,
         }
         raw_json = json.dumps(payload, sort_keys=True)
         return hashlib.sha256(raw_json.encode("utf-8")).hexdigest()
