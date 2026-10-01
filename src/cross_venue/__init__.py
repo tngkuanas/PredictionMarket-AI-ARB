@@ -1,4 +1,4 @@
-"""Cross-Venue Polymarket-Kalshi Arbitrage Framework (Phase 10A.6e)."""
+"""Cross-Venue Polymarket-Kalshi Arbitrage Framework (Phase 10A.6e & 10A.6g)."""
 
 from src.cross_venue.schema import (
     EquivalenceClass,
@@ -20,6 +20,22 @@ from src.cross_venue.settlement_normalizer import SettlementNormalizer
 from src.cross_venue.synchronizer import CrossVenueSynchronizer
 from src.cross_venue.cross_venue_arb_engine import CrossVenueArbEngine
 from src.cross_venue.db_store import CrossVenueDBStore
+from src.cross_venue.cross_venue_adversarial import (
+    AdversarialConfig,
+    BaselineExecutionResult,
+    LatencyStressResult,
+    DepthStressResult,
+    FeeStressResult,
+    SlippageStressResult,
+    QuoteStalenessResult,
+    AsynchronousLegResult,
+    PriceMovementResult,
+    CapitalStressResult,
+    CorrelatedStressResult,
+    EdgeSurvivalBound,
+    AdversarialAuditSummary,
+    CrossVenueAdversarialEngine,
+)
 
 __all__ = [
     "EquivalenceClass",
@@ -40,4 +56,18 @@ __all__ = [
     "CrossVenueSynchronizer",
     "CrossVenueArbEngine",
     "CrossVenueDBStore",
+    "AdversarialConfig",
+    "BaselineExecutionResult",
+    "LatencyStressResult",
+    "DepthStressResult",
+    "FeeStressResult",
+    "SlippageStressResult",
+    "QuoteStalenessResult",
+    "AsynchronousLegResult",
+    "PriceMovementResult",
+    "CapitalStressResult",
+    "CorrelatedStressResult",
+    "EdgeSurvivalBound",
+    "AdversarialAuditSummary",
+    "CrossVenueAdversarialEngine",
 ]
