@@ -102,7 +102,16 @@ class ExecutionDataIntegrityAuditor:
 
     def run_full_audit(self) -> Dict[str, Any]:
         """Executes the complete Phase 10A.3b audit pipeline."""
-        conn = duckdb.connect(self.db_path)
+        import time
+        conn = None
+        for _ in range(30):
+            try:
+                conn = duckdb.connect(self.db_path, read_only=True)
+                break
+            except Exception:
+                time.sleep(0.3)
+        if conn is None:
+            conn = duckdb.connect(self.db_path, read_only=True)
         try:
             logger.info("Starting Phase 10A.3b Execution Cost & Historical Data Integrity Audit...")
             study_df = conn.execute("SELECT * FROM phase10a_event_study").fetchdf()
@@ -339,9 +348,12 @@ class ExecutionDataIntegrityAuditor:
         )
 
     def _persist_audit_table(self, conn: duckdb.DuckDBPyConnection, df: pd.DataFrame):
-        conn.execute("DROP TABLE IF EXISTS phase10a3b_execution_audit")
-        conn.execute("CREATE TABLE phase10a3b_execution_audit AS SELECT * FROM df")
-        logger.info(f"Persisted {len(df)} rows to table phase10a3b_execution_audit.")
+        try:
+            conn.execute("DROP TABLE IF EXISTS phase10a3b_execution_audit")
+            conn.execute("CREATE TABLE phase10a3b_execution_audit AS SELECT * FROM df")
+            logger.info(f"Persisted {len(df)} rows to table phase10a3b_execution_audit.")
+        except Exception as e:
+            logger.warning(f"Could not persist audit table (e.g. read-only mode during live collection): {e}")
 
     def _decompose_friction(self) -> Dict[str, Any]:
         """Decomposes the 160 bps friction applied in Phase 10A.3."""

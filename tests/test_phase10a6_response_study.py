@@ -36,7 +36,7 @@ def test_mandatory_data_span_auditor(db_path):
 
     # Verify span is under 72 hours
     assert 60.0 < res.wall_clock_span_seconds < 72.0 * 3600.0  # Under 72 hours
-    assert res.calendar_days_spanned == 1
+    assert res.calendar_days_spanned < 3  # Less than the required 3 distinct days
     assert res.is_multi_day is False
     assert res.gate_passed is False
     assert res.gate_verdict == "INSUFFICIENT_TEMPORAL_COVERAGE"

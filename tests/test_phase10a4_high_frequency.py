@@ -415,7 +415,7 @@ def test_duckdb_persistence_records():
     """Queries DuckDB to verify tables exist and have valid rows from pipeline run."""
     import time
     conn = None
-    for _ in range(15):
+    for _ in range(30):
         try:
             conn = duckdb.connect("data/prediction_market.duckdb", read_only=True)
             break

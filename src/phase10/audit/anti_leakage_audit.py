@@ -91,7 +91,7 @@ class AntiLeakageAuditor:
 
     def _get_read_conn(self):
         """Connects in read_only mode with backoff retries to tolerate concurrent background writes."""
-        for _ in range(15):
+        for _ in range(30):
             try:
                 return duckdb.connect(self.db_path, read_only=True)
             except Exception:

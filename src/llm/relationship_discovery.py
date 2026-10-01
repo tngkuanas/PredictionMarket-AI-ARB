@@ -20,6 +20,12 @@ from src.normalization.schema import (
     OpportunityClass,
 )
 from src.llm.base import BaseLLMClient, get_llm_client, HeuristicDomainLLMClient
+from src.statarb.schema import (
+    StructuredHypothesis,
+    HypothesisFamily,
+    HypothesisStatus,
+)
+from src.statarb.boundary_validator import BoundaryValidator
 
 logger = logging.getLogger(__name__)
 
@@ -390,3 +396,159 @@ class RelationshipDiscoveryEngine:
         except Exception as e:
             logger.warning(f"Failed to parse LLM candidate: {e}")
             return None
+
+    def discover_structured_hypotheses(
+        self,
+        canonical_markets: List[CanonicalMarket],
+        max_hypotheses: int = 10
+    ) -> List[StructuredHypothesis]:
+        """Discovers structured, testable hypotheses classified into the 7 hypothesis families
+        and verified by BoundaryValidator.
+        """
+        if not canonical_markets:
+            return []
+
+        if not isinstance(self.llm, HeuristicDomainLLMClient):
+            try:
+                return self._discover_structured_via_api(canonical_markets, max_hypotheses)
+            except Exception as e:
+                logger.warning(f"Structured LLM discovery failed ({e}), falling back to domain engine.")
+                return self._discover_structured_via_domain(canonical_markets, max_hypotheses)
+        else:
+            return self._discover_structured_via_domain(canonical_markets, max_hypotheses)
+
+    def _discover_structured_via_api(
+        self,
+        markets: List[CanonicalMarket],
+        max_hypotheses: int
+    ) -> List[StructuredHypothesis]:
+        """Queries LLM using the operational template: INPUT -> TRANSFORMATION -> PREDICTION -> HORIZON -> COST -> FALSIFICATION."""
+        market_summaries = [
+            f"ID: {m.market_id} | Title: {m.title} | Entities: {','.join(m.entities)} | Event: {m.event_type} | Horizon: {m.time_horizon}"
+            for m in markets[:50]
+        ]
+        prompt = (
+            "You are an elite quantitative researcher in prediction markets.\n"
+            "Generate structured testable hypotheses for statistical arbitrage.\n"
+            "Classify each hypothesis into exactly one of the 7 designated families:\n"
+            "exact_contract_arb, resolution_arb, conditional_stat_arb, cross_market_lead_lag, "
+            "order_flow_microstructure, event_conditional_stat_arb, cross_venue_platform.\n"
+            "CRITICAL: Do NOT declare profitability or guaranteed alpha. Confidence is DISCOVERY PRIOR ONLY.\n"
+            "Every hypothesis MUST adhere to the operational template:\n"
+            "INPUT -> TRANSFORMATION -> PREDICTION -> HORIZON -> COST_MODEL -> FALSIFICATION_TEST.\n\n"
+            "Markets:\n" + "\n".join(market_summaries)
+        )
+        schema_desc = """
+        {
+          "hypotheses": [
+            {
+              "hypothesis_id": "hyp_btc_eth_leadlag_001",
+              "hypothesis_family": "cross_market_lead_lag",
+              "source_markets": ["..."],
+              "target_markets": ["..."],
+              "causal_mechanism": "...",
+              "required_observations": ["order_book_l2", "trades"],
+              "observable_variables": ["signed_order_flow_imbalance", "mid_price"],
+              "expected_relationship": "...",
+              "direction": "positive | negative | mean_reverting | lead_lag | monotone_bound",
+              "expected_time_horizon": "5-30s | 1m-5m | 1h-4h",
+              "falsification_condition": "...",
+              "minimum_sample_requirement": 30,
+              "proposed_statistical_test": "permutation_test",
+              "proposed_placebo_control": "time_shift_24h",
+              "execution_dependency": "taker_l2_walk",
+              "expected_friction_sensitivity": "medium",
+              "capacity_dependency": 1000.0,
+              "known_confounders": ["macro_drift"],
+              "lookahead_risk": "None, calculated strictly on lagged observations",
+              "confidence": 0.8,
+              "input_signal": "5-minute signed order-flow imbalance in contract A",
+              "transformation": "standardized imbalance > 2.0 sigma",
+              "prediction": "contract B executable mid moves in same direction by >= 25 bps",
+              "horizon": "5-30 seconds",
+              "cost_model": "actual observed L2 ladder + 20 bps taker fee",
+              "falsification_test": "randomized timestamps + reverse direction + matched controls",
+              "lineage_family_id": "fam_btc_eth_leadlag"
+            }
+          ]
+        }
+        """
+        res = self.llm.generate_json(prompt, schema_desc)
+        hypotheses: List[StructuredHypothesis] = []
+        for item in res.get("hypotheses", [])[:max_hypotheses]:
+            try:
+                hyp = BoundaryValidator.sanitize_and_construct(item)
+                hypotheses.append(hyp)
+            except Exception as e:
+                logger.warning(f"Boundary validation failed for AI hypothesis proposal: {e}")
+        return hypotheses
+
+    def _discover_structured_via_domain(
+        self,
+        markets: List[CanonicalMarket],
+        max_hypotheses: int
+    ) -> List[StructuredHypothesis]:
+        """Domain generator producing verified hypotheses across designated families."""
+        raw_candidates = self._discover_via_domain_engine(markets, max_candidates=max_hypotheses * 2)
+        structured: List[StructuredHypothesis] = []
+
+        for cand in raw_candidates:
+            # Map candidate to structured hypothesis
+            opp = cand.discovery.opportunity_class
+            rel = cand.discovery.relationship_type
+
+            if opp == OpportunityClass.STRUCTURAL:
+                fam = HypothesisFamily.EXACT_CONTRACT_ARB
+            elif opp in (OpportunityClass.RESOLUTION_ARBITRAGE, OpportunityClass.CROSS_MARKET_LOGICAL):
+                fam = HypothesisFamily.RESOLUTION_ARB
+            elif rel == RelationshipType.TEMPORAL_LEAD_LAG or opp == OpportunityClass.INFORMATION_LATENCY:
+                fam = HypothesisFamily.CROSS_MARKET_LEAD_LAG
+            elif opp == OpportunityClass.SECOND_ORDER or rel == RelationshipType.EVENT_CHAIN:
+                fam = HypothesisFamily.EVENT_CONDITIONAL_STAT_ARB
+            elif rel == RelationshipType.CROSS_PLATFORM_EQUIVALENCE:
+                fam = HypothesisFamily.CROSS_VENUE_PLATFORM
+            else:
+                fam = HypothesisFamily.CONDITIONAL_STAT_ARB
+
+            short_id = f"hyp_{cand.discovery.discovery_id[-6:]}"
+            fam_id = f"fam_{fam.value}_{cand.discovery.market_a_id[:6]}_{cand.discovery.market_b_id[:6]}"
+
+            proposal_dict = {
+                "hypothesis_id": short_id,
+                "hypothesis_family": fam.value,
+                "source_markets": [cand.discovery.market_a_id],
+                "target_markets": [cand.discovery.market_b_id],
+                "causal_mechanism": cand.discovery.economic_mechanism,
+                "required_observations": ["order_book_l2", "trades"],
+                "observable_variables": ["mid_price", "spread", "delta_p"],
+                "expected_relationship": cand.constraint.mathematical_expression,
+                "direction": "lead_lag" if fam == HypothesisFamily.CROSS_MARKET_LEAD_LAG else "mean_reverting",
+                "expected_time_horizon": f"{int(cand.constraint.lead_time_hours)}h",
+                "falsification_condition": cand.constraint.testable_null_hypothesis,
+                "minimum_sample_requirement": 30,
+                "proposed_statistical_test": "permutation_test",
+                "proposed_placebo_control": "time_shift_24h_placebo",
+                "execution_dependency": "taker_l2_walk",
+                "expected_friction_sensitivity": "medium",
+                "capacity_dependency": 1000.0,
+                "known_confounders": ["macro_trend", "common_liquidity_shock"],
+                "lookahead_risk": "Strict zero-lookahead: leading market trigger strictly precedes evaluation window.",
+                "confidence": cand.discovery.confidence,
+                "input_signal": f"Leading market {cand.discovery.market_a_id} price delta >= {cand.constraint.trigger_threshold_delta_a}",
+                "transformation": "Standardized difference over baseline drift",
+                "prediction": f"Target market {cand.discovery.market_b_id} moves by >= {cand.constraint.expected_delta_b}",
+                "horizon": f"{cand.constraint.lead_time_hours} hours",
+                "cost_model": "Observed L2 ladder depth + 20 bps taker fee + 5 bps latency penalty",
+                "falsification_test": "Time-shifted placebo + reverse-direction symmetric test + randomized pairs",
+                "lineage_family_id": fam_id,
+            }
+
+            try:
+                hyp = BoundaryValidator.sanitize_and_construct(proposal_dict)
+                structured.append(hyp)
+                if len(structured) >= max_hypotheses:
+                    break
+            except Exception as e:
+                logger.warning(f"Failed to construct structured hypothesis: {e}")
+
+        return structured
