@@ -71,12 +71,13 @@ class Phase10A8DbStore:
         self._init_tables()
 
     def _get_connection(self) -> duckdb.DuckDBPyConnection:
-        """Returns connection with retry mechanism for handling concurrency with PID 53380."""
-        for attempt in range(5):
+        """Returns connection with exponential backoff and jitter for handling write concurrency."""
+        import random
+        for attempt in range(15):
             try:
                 return duckdb.connect(self.db_path)
             except Exception as e:
-                time.sleep(0.2 * (2 ** attempt))
+                time.sleep(0.05 * (1.4 ** attempt) + random.uniform(0.02, 0.08))
         return duckdb.connect(self.db_path)
 
     def _init_tables(self) -> None:

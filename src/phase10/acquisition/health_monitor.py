@@ -19,6 +19,8 @@ import logging
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 import numpy as np
+import time
+import random
 import duckdb
 
 from src.phase10.acquisition.schema import (
@@ -142,15 +144,21 @@ class LongRunHealthMonitor:
             disk_storage_bytes=disk_bytes,
         )
 
-        # Persist heartbeat to DB
-        try:
-            conn = duckdb.connect(self.db_path)
+        # Persist heartbeat to DB with retry and backoff
+        max_retries = 10
+        for attempt in range(max_retries):
             try:
-                self.db_store.persist_health_heartbeat(conn, hb)
-            finally:
-                conn.close()
-        except Exception as e:
-            logger.warning(f"Could not persist health heartbeat to DuckDB: {e}")
+                conn = duckdb.connect(self.db_path)
+                try:
+                    self.db_store.persist_health_heartbeat(conn, hb)
+                    break
+                finally:
+                    conn.close()
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    logger.warning(f"Could not persist health heartbeat to DuckDB after {max_retries} attempts: {e}")
+                else:
+                    time.sleep(min(1.0, 0.05 * (1.5 ** attempt)) + random.uniform(0.01, 0.05))
 
         # Persist status JSON file for external observability
         try:

@@ -7,11 +7,13 @@ and strict message accounting reconciliation.
 """
 
 import asyncio
+from contextlib import contextmanager
 from datetime import datetime, timezone
 import json
 import logging
 from pathlib import Path
 import random
+import time
 from typing import Dict, List, Optional, Set, Any, Tuple, Callable
 
 import duckdb
@@ -159,6 +161,66 @@ class MultiSessionContinuousRecorder:
         self._session_last_stream_seq: Dict[str, int] = {}
         self._last_token_timestamp: Dict[str, datetime] = {}
         self.sequence_anomalies: List[DataQualityRecord] = []
+        self._pending_reconnect_events: List[ReconnectEventRecord] = []
+
+    @contextmanager
+    def _safe_write_transaction(self, max_retries: int = 20, timeout_sec: float = 30.0):
+        """Acquires single-writer DuckDB write connection with exponential backoff and jitter."""
+        start_time = time.time()
+        conn = None
+        attempt = 0
+        last_err = None
+
+        while time.time() - start_time < timeout_sec:
+            attempt += 1
+            try:
+                conn = duckdb.connect(self.db_path)
+                break
+            except Exception as e:
+                err_str = str(e).lower()
+                last_err = e
+                if "lock" in err_str or "locked" in err_str:
+                    delay = min(2.0, 0.05 * (1.4 ** attempt)) + random.uniform(0.05, 0.15)
+                    logger.warning(
+                        f"DuckDB write lock busy on {self.db_path}: {e}. Retrying in {delay:.2f}s (attempt {attempt})..."
+                    )
+                    time.sleep(delay)
+                else:
+                    raise e
+
+        if conn is None:
+            raise duckdb.IOException(
+                f"DuckDB lock acquisition timed out after {timeout_sec:.1f}s ({attempt} attempts). Last error: {last_err}"
+            )
+
+        try:
+            yield conn
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                del conn
+                import gc
+                gc.collect()
+
+    def _safe_persist_reconnect_events(self, events: List[ReconnectEventRecord]) -> None:
+        """Persists reconnect events, buffering in memory if DuckDB is temporarily busy."""
+        all_events = list(self._pending_reconnect_events) + list(events)
+        if not all_events:
+            return
+
+        try:
+            with self._safe_write_transaction(max_retries=10, timeout_sec=10.0) as conn:
+                self.db_store.persist_reconnect_events(conn, all_events)
+                self._pending_reconnect_events.clear()
+        except Exception as e:
+            logger.warning(
+                f"Transient DuckDB lock during reconnect logging: {e}. "
+                f"Buffered {len(all_events)} reconnect events in memory for next session cycle flush."
+            )
+            self._pending_reconnect_events = all_events
 
     def _generate_session_id(self) -> str:
         return f"sess_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{random.randint(100, 999)}"
@@ -279,8 +341,7 @@ class MultiSessionContinuousRecorder:
         self.health_monitor.generate_heartbeat(session_id=session_id)
 
         # Persist session to DuckDB
-        conn = duckdb.connect(self.db_path)
-        try:
+        with self._safe_write_transaction() as conn:
             self.db_store.persist_raw_messages(conn, recorder.buffered_raw_records)
             self.db_store.persist_book_updates(conn, self.reconstructor.book_updates)
             self.db_store.persist_book_snapshots(conn, self.reconstructor.reconstructed_snapshots)
@@ -288,11 +349,9 @@ class MultiSessionContinuousRecorder:
             self.db_store.persist_session(conn, session_record)
             if self.sequence_anomalies:
                 self.db_store.persist_data_quality(conn, self.sequence_anomalies)
-        finally:
-            conn.close()
-            del conn
-            import gc
-            gc.collect()
+            if self._pending_reconnect_events:
+                self.db_store.persist_reconnect_events(conn, self._pending_reconnect_events)
+                self._pending_reconnect_events.clear()
 
         # Clear per-session buffers to bound memory and avoid quadratic re-persistence
         self.reconstructor.clear_buffers()
@@ -314,11 +373,8 @@ class MultiSessionContinuousRecorder:
         logger.info(f"Starting continuous accumulation: target={target_total_duration_sec}s, cycle={session_cycle_duration_sec}s")
 
         # 1. Initialize DB schema
-        conn = duckdb.connect(self.db_path)
-        try:
+        with self._safe_write_transaction() as conn:
             self.db_store.init_schema(conn)
-        finally:
-            conn.close()
 
         # 2. Initial Market Universe Discovery
         initial_sess_id = self._generate_session_id()
@@ -329,13 +385,10 @@ class MultiSessionContinuousRecorder:
         if initial_changes:
             self.universe_change_events.extend(initial_changes)
         
-        conn = duckdb.connect(self.db_path)
-        try:
+        with self._safe_write_transaction() as conn:
             self.db_store.persist_market_universe(conn, universe)
             if initial_changes:
                 self.db_store.persist_universe_events(conn, initial_changes)
-        finally:
-            conn.close()
 
         monitored_tokens = [u.token_id for u in universe]
         logger.info(f"Monitored universe established: {len(monitored_tokens)} tokens across {len(set(u.market_id for u in universe))} markets.")
@@ -387,12 +440,12 @@ class MultiSessionContinuousRecorder:
                     )
                     self.reconnect_events.append(reconnect_rec)
                     sess_record.reconnect_count += 1
-                    conn = duckdb.connect(self.db_path)
+                    self._safe_persist_reconnect_events([reconnect_rec])
                     try:
-                        self.db_store.persist_reconnect_events(conn, [reconnect_rec])
-                        self.db_store.persist_session(conn, sess_record)
-                    finally:
-                        conn.close()
+                        with self._safe_write_transaction(max_retries=10, timeout_sec=10.0) as conn:
+                            self.db_store.persist_session(conn, sess_record)
+                    except Exception as e:
+                        logger.warning(f"Could not update session record on disconnect: {e}")
 
             except Exception as e:
                 logger.error(f"Unhandled exception in session {sess_id}: {e}")
@@ -417,11 +470,7 @@ class MultiSessionContinuousRecorder:
                     snapshot_success=True
                 )
                 self.reconnect_events.append(reconnect_rec)
-                conn = duckdb.connect(self.db_path)
-                try:
-                    self.db_store.persist_reconnect_events(conn, [reconnect_rec])
-                finally:
-                    conn.close()
+                self._safe_persist_reconnect_events([reconnect_rec])
 
             # Check if universe refresh is due
             now = datetime.now(timezone.utc)
@@ -431,14 +480,11 @@ class MultiSessionContinuousRecorder:
                 if new_entries:
                     self.all_universe_entries.extend(new_entries)
                     monitored_tokens = list(set([u.token_id for u in self.all_universe_entries if u.is_active]))
-                    conn = duckdb.connect(self.db_path)
-                    try:
+                    with self._safe_write_transaction() as conn:
                         self.db_store.persist_market_universe(conn, new_entries)
                         if change_events:
                             self.db_store.persist_universe_events(conn, change_events)
                             self.universe_change_events.extend(change_events)
-                    finally:
-                        conn.close()
                 last_universe_refresh = now
 
         end_wall_time = datetime.now(timezone.utc)
@@ -449,7 +495,7 @@ class MultiSessionContinuousRecorder:
         reconciliation = self.audit_dataset_accounting()
 
         # Anti-Synthetic Certification
-        conn = duckdb.connect(self.db_path)
+        conn = duckdb.connect(self.db_path, read_only=True)
         try:
             anti_synthetic = AntiSyntheticGuard.scan_production_tables(conn)
         finally:
