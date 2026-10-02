@@ -158,14 +158,14 @@ class SourceRegistry:
 
     @classmethod
     def lookup_source(cls, source_id: str) -> Optional[Dict[str, Any]]:
-        """Look up source details by identifier."""
+        """Look up source details by identifier or domain."""
         sid = source_id.lower().replace("-", "_").replace(" ", "_")
-        if sid in cls.TIER_1_SOURCES:
-            return cls.TIER_1_SOURCES[sid]
-        if sid in cls.TIER_2_SOURCES:
-            return cls.TIER_2_SOURCES[sid]
-        if sid in cls.TIER_3_SOURCES:
-            return cls.TIER_3_SOURCES[sid]
+        for pool in (cls.TIER_1_SOURCES, cls.TIER_2_SOURCES, cls.TIER_3_SOURCES):
+            if sid in pool:
+                return pool[sid]
+            for s in pool.values():
+                if sid in s.get("domains", []):
+                    return s
         return None
 
     @classmethod
